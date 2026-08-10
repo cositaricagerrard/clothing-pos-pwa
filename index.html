@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0e5349">
+  <title>Abo Omar Store</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-frame">
+    <aside class="side-rail" aria-label="التنقل الرئيسي">
+      <div class="brand">
+        <span class="brand-mark"><img class="brand-logo" src="assets/icon-192.png" alt="Abo Omar Store"></span>
+        <span>
+          <strong id="railStoreName">Abo Omar Store</strong>
+          <small>نظام البيع والمخزون</small>
+        </span>
+      </div>
+      <nav class="nav-list" id="sideNav"></nav>
+      <button class="ghost action-wide" id="installButton" hidden type="button">تثبيت التطبيق</button>
+      <p class="rail-note">يعمل دون اتصال بعد أول زيارة، مع حفظ الفواتير والمنتجات محليا.</p>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="brand brand-mobile" id="mobileBrandBlock">
+            <span class="brand-mark"><img class="brand-logo" id="mobileBrandLogo" src="assets/icon-192.png" alt="شعار المتجر"></span>
+            <span>
+              <strong id="mobileStoreName">Abo Omar Store</strong>
+              <small>نظام البيع والمخزون</small>
+            </span>
+          </div>
+          <p class="eyebrow" id="connectionStatus">جاهز للعمل</p>
+          <h1 id="viewTitle">الرئيسية</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn theme-toggle" id="themeToggleBtn" type="button" title="التبديل للوضع الداكن" aria-label="الوضع الداكن">🌙</button>
+          <button class="icon-btn" id="mobileInstallButton" hidden type="button" aria-label="تثبيت التطبيق">+</button>
+          <button class="primary" id="quickSaleButton" type="button">بيع سريع</button>
+        </div>
+      </header>
+
+      <main id="app" class="content" tabindex="-1"></main>
+    </div>
+  </div>
+
+  <nav class="bottom-nav" id="bottomNav" aria-label="التنقل السفلي"></nav>
+
+  <dialog class="dialog" id="productDialog">
+    <form method="dialog" class="dialog-panel product-editor" id="productForm">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">إدارة الأصناف</p>
+          <h2 id="productDialogTitle">إضافة صنف</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+
+      <div class="form-grid">
+        <label class="image-picker">
+          <input id="productImage" type="file" accept="image/*">
+          <img id="imagePreview" alt="معاينة صورة الصنف">
+          <span>رفع صورة الصنف</span>
+        </label>
+
+        <div class="fields">
+          <input type="hidden" id="productId">
+          <label>اسم الصنف <input id="productName" required autocomplete="off"></label>
+          <label>رمز SKU <input id="productSku" required autocomplete="off"></label>
+          <div class="two">
+            <label>الفئة
+              <select id="productCategory">
+                <option>نسائي</option>
+                <option>رجالي</option>
+                <option>أطفال</option>
+                <option>إكسسوارات</option>
+              </select>
+            </label>
+            <label>المقاس <input id="productSize" required placeholder="S / M / L"></label>
+          </div>
+          <div class="two">
+            <label>اللون <input id="productColor" required></label>
+            <label>الكمية <input id="productQty" required min="0" type="number"></label>
+          </div>
+          <div class="three">
+            <label>سعر البيع <input id="productPrice" required min="0" step="0.01" type="number"></label>
+            <label>التكلفة <input id="productCost" required min="0" step="0.01" type="number"></label>
+            <label>تنبيه عند <input id="productLow" required min="0" type="number"></label>
+          </div>
+        </div>
+      </div>
+
+      <footer class="dialog-actions">
+        <button class="danger ghost" id="deleteProductButton" type="button" hidden>حذف الصنف</button>
+        <span></span>
+        <button class="ghost" type="button" data-close-dialog>إلغاء</button>
+        <button class="primary" value="default" type="submit">حفظ الصنف</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog class="dialog invoice-dialog" id="invoiceDialog">
+    <section class="dialog-panel invoice-shell">
+      <div id="invoicePrintArea"></div>
+      <footer class="dialog-actions no-print">
+        <button class="ghost" type="button" data-close-dialog>إغلاق</button>
+        <button class="ghost" id="shareInvoiceButton" type="button">مشاركة</button>
+        <button class="primary" id="downloadInvoiceButton" type="button">تحميل PDF</button>
+      </footer>
+    </section>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="assets/default-logo.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

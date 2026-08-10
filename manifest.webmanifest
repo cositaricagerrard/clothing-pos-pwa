@@ -1,0 +1,26 @@
+{
+  "name": "Abo Omar Store",
+  "short_name": "Abo Omar Store",
+  "description": "تطبيق بيع ملابس ومخزون وفواتير - Abo Omar Store",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8f3ea",
+  "theme_color": "#0e5349",
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
