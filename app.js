@@ -5,7 +5,8 @@
     products: "clothing-pos.products.v1",
     sales: "clothing-pos.sales.v1",
     settings: "clothing-pos.settings.v1",
-    theme: "clothing-pos.theme.v1"
+    theme: "clothing-pos.theme.v1",
+    session: "clothing-pos.session.v1"
   };
 
   const navItems = [
@@ -17,6 +18,20 @@
     { id: "reports", title: "التقارير", icon: "ت" },
     { id: "settings", title: "الإعدادات", icon: "ع" }
   ];
+
+  const navIcons = {
+    dashboard: `<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`,
+    products: `<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>`,
+    sale: `<circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>`,
+    customers: `<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>`,
+    invoices: `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>`,
+    reports: `<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>`,
+    settings: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>`
+  };
+
+  function navIconSvg(id) {
+    return `<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${navIcons[id] || ""}</svg>`;
+  }
 
   const state = {
     view: "dashboard",
@@ -38,7 +53,12 @@
     _custSort: "total",
     _custOpen: "",
     _saleCustomerName: "",
-    _saleCustomerPhone: ""
+    _saleCustomerPhone: "",
+    _saleDiscount: 0,
+    _saleShipping: 0,
+    _salePayment: "نقدا",
+    _saleTaxFree: false,
+    allowExit: false
   };
 
   const reportTypes = [
@@ -129,6 +149,7 @@
     }
     saveAll();
     applySettings();
+    loadSession();
     state.view = viewFromHash() || "dashboard";
     if (!viewFromHash()) {
       try {
@@ -183,6 +204,59 @@
     localStorage.setItem(STORAGE.settings, JSON.stringify(state.settings));
   }
 
+  function saveSession() {
+    try {
+      localStorage.setItem(STORAGE.session, JSON.stringify({
+        cart: state.cart,
+        saleCustomerName: state._saleCustomerName,
+        saleCustomerPhone: state._saleCustomerPhone,
+        saleDiscount: state._saleDiscount,
+        saleShipping: state._saleShipping,
+        salePayment: state._salePayment,
+        saleTaxFree: state._saleTaxFree,
+        view: state.view,
+        custView: state._custView,
+        custSort: state._custSort,
+        custQuery: state._custQuery,
+        search: state.search,
+        category: state.category,
+        invoiceFilter: state._invoiceFilter || "all",
+        showLowStockOnly: !!state._showLowStockOnly
+      }));
+    } catch (error) {
+      /* storage unavailable or full — keep the app running */
+    }
+  }
+
+  function loadSession() {
+    const stored = readStorage(STORAGE.session, null);
+    if (!stored || typeof stored !== "object") return false;
+    if (Array.isArray(stored.cart)) {
+      state.cart = stored.cart
+        .filter(item => item && state.products.some(product => product.id === item.productId) && Number(item.qty) > 0)
+        .map(item => {
+          const product = state.products.find(product => product.id === item.productId);
+          return { productId: item.productId, qty: Math.min(Number(item.qty), product.quantity) };
+        });
+    }
+    state._saleCustomerName = stored.saleCustomerName || "";
+    state._saleCustomerPhone = stored.saleCustomerPhone || "";
+    state._saleDiscount = Math.max(0, Number(stored.saleDiscount || 0));
+    state._saleShipping = Math.max(0, Number(stored.saleShipping || 0));
+    state._salePayment = ["نقدا", "بطاقة", "تحويل", "مختلط"].includes(stored.salePayment) ? stored.salePayment : "نقدا";
+    state._saleTaxFree = !!stored.saleTaxFree;
+    state._custView = ["cards", "table", "list"].includes(stored.custView) ? stored.custView : "cards";
+    state._custSort = ["total", "count", "items", "last", "name"].includes(stored.custSort) ? stored.custSort : "total";
+    state._custQuery = stored.custQuery || "";
+    state.search = stored.search || "";
+    state.category = stored.category || "الكل";
+    state._invoiceFilter = stored.invoiceFilter === "today" ? "today" : "all";
+    state._showLowStockOnly = !!stored.showLowStockOnly;
+    const sessionView = stored.view && navItems.some(nav => nav.id === stored.view) ? stored.view : "";
+    state.view = viewFromHash() || sessionView || "dashboard";
+    return state.cart.length > 0;
+  }
+
   function applySettings() {
     document.documentElement.style.setProperty("--accent", state.settings.accent || "#0e5349");
     document.getElementById("railStoreName").textContent = state.settings.storeName;
@@ -208,6 +282,8 @@
     document.querySelectorAll("[data-close-dialog]").forEach(button => {
       button.addEventListener("click", () => button.closest("dialog").close());
     });
+    document.getElementById("cancelExitButton").addEventListener("click", cancelExitApp);
+    document.getElementById("confirmExitButton").addEventListener("click", confirmExitApp);
 
     productForm.addEventListener("submit", saveProductFromForm);
     document.getElementById("productImage").addEventListener("change", previewProductImage);
@@ -228,6 +304,12 @@
       updateInstallButtons();
       toastMessage("تم تثبيت التطبيق بنجاح 🎉");
     });
+    ["pagehide", "beforeunload", "freeze"].forEach(eventName => {
+      window.addEventListener(eventName, saveSession);
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") saveSession();
+    });
     updateInstallButtons();
   }
 
@@ -243,8 +325,9 @@
 
   function renderNav() {
     const html = navItems.map(item => `
-      <button class="nav-button ${item.id === state.view ? "active" : ""}" data-view="${item.id}" data-icon="${item.icon}" type="button">
-        ${item.title}
+      <button class="nav-button ${item.id === state.view ? "active" : ""}" data-view="${item.id}" type="button">
+        <span class="nav-icon-box">${navIconSvg(item.id)}</span>
+        <span class="nav-label">${item.title}</span>
       </button>
     `).join("");
     sideNav.innerHTML = html;
@@ -269,12 +352,58 @@
   }
 
   function onHashChange() {
-    const view = viewFromHash() || "dashboard";
+    const view = viewFromHash();
+    if (!view) {
+      if (!state.allowExit) {
+        showExitDialog();
+        try {
+          history.replaceState(null, "", "#/dashboard");
+        } catch (error) {
+          /* file:// environments fall back to plain rendering */
+        }
+        return;
+      }
+      state.allowExit = false;
+    }
     if (state.view !== view) {
       state.view = view;
       render();
     }
     app.focus({ preventScroll: true });
+  }
+
+  function showExitDialog() {
+    const exitDialog = document.getElementById("exitDialog");
+    if (exitDialog && !exitDialog.open) exitDialog.showModal();
+  }
+
+  function cancelExitApp() {
+    const exitDialog = document.getElementById("exitDialog");
+    if (exitDialog && exitDialog.open) exitDialog.close();
+    state.allowExit = false;
+  }
+
+  function confirmExitApp() {
+    saveSession();
+    const exitDialog = document.getElementById("exitDialog");
+    if (exitDialog && exitDialog.open) exitDialog.close();
+    state.allowExit = true;
+    try {
+      history.back();
+    } catch (error) {
+      /* ignore */
+    }
+    try {
+      window.close();
+    } catch (error) {
+      /* ignore */
+    }
+    setTimeout(() => {
+      state.allowExit = false;
+      if (viewFromHash() === "dashboard") {
+        toastMessage("تم حفظ بياناتك بالكامل. يمكنك إغلاق التطبيق الآن.");
+      }
+    }, 500);
   }
 
   function render() {
@@ -457,26 +586,26 @@
             <label>اسم العميل <input id="customerName" value="${escapeAttr(state._saleCustomerName)}" placeholder="عميل نقدي"></label>
             <label>هاتف العميل <input id="customerPhone" value="${escapeAttr(state._saleCustomerPhone)}" inputmode="tel" placeholder="اختياري"></label>
             <div class="two">
-              <label>خصم <input id="discountAmount" min="0" step="0.01" type="number" value="0"></label>
-              <label>مصاريف الشحن <input id="shippingAmount" min="0" step="0.01" type="number" value="0"></label>
+              <label>خصم <input id="discountAmount" min="0" step="0.01" type="number" value="${state._saleDiscount || 0}"></label>
+              <label>مصاريف الشحن <input id="shippingAmount" min="0" step="0.01" type="number" value="${state._saleShipping || 0}"></label>
             </div>
             <label>طريقة الدفع
               <select id="paymentMethod">
-                <option>نقدا</option>
-                <option>بطاقة</option>
-                <option>تحويل</option>
-                <option>مختلط</option>
+                <option${state._salePayment === "نقدا" ? " selected" : ""}>نقدا</option>
+                <option${state._salePayment === "بطاقة" ? " selected" : ""}>بطاقة</option>
+                <option${state._salePayment === "تحويل" ? " selected" : ""}>تحويل</option>
+                <option${state._salePayment === "مختلط" ? " selected" : ""}>مختلط</option>
               </select>
             </label>
             ${state.settings.allowTaxFree ? `<label class="check-line" style="margin-top:4px">
-              <input id="taxFreeToggle" type="checkbox">
+              <input id="taxFreeToggle" type="checkbox"${state._saleTaxFree ? " checked" : ""}>
               <span>
                 <strong>بدون ضريبة لهذه الفاتورة</strong>
                 <small>يُصدر الإجمالي دون احتساب الضريبة ${state.settings.taxRate}%.</small>
               </span>
             </label>` : ""}
           </div>
-          ${cartTotalsHtml(0, 0, false)}
+          ${cartTotalsHtml(state._saleDiscount, state._saleShipping, state._saleTaxFree)}
           <button class="primary action-wide" id="checkoutButton" type="button">إصدار الفاتورة</button>
         </aside>
       </div>
@@ -1341,11 +1470,20 @@
       const totals = document.getElementById("cartTotals");
       const taxFree = !!document.getElementById("taxFreeToggle")?.checked;
       if (totals) totals.outerHTML = cartTotalsHtml(Number(discount?.value || 0), Number(shipping?.value || 0), taxFree);
+      state._saleDiscount = Math.max(0, Number(discount?.value || 0));
+      state._saleShipping = Math.max(0, Number(shipping?.value || 0));
+      state._saleTaxFree = taxFree;
+      saveSession();
     };
     if (discount) discount.addEventListener("input", updateTotals);
     if (shipping) shipping.addEventListener("input", updateTotals);
     const taxFreeToggle = document.getElementById("taxFreeToggle");
     if (taxFreeToggle) taxFreeToggle.addEventListener("change", updateTotals);
+    const paymentMethod = document.getElementById("paymentMethod");
+    if (paymentMethod) paymentMethod.addEventListener("change", () => {
+      state._salePayment = paymentMethod.value;
+      saveSession();
+    });
     const checkout = document.getElementById("checkoutButton");
     if (checkout) checkout.addEventListener("click", checkoutCart);
 
@@ -1393,10 +1531,12 @@
     const customerNameInput = document.getElementById("customerName");
     if (customerNameInput) customerNameInput.addEventListener("input", () => {
       state._saleCustomerName = customerNameInput.value;
+      saveSession();
     });
     const customerPhoneInput = document.getElementById("customerPhone");
     if (customerPhoneInput) customerPhoneInput.addEventListener("input", () => {
       state._saleCustomerPhone = customerPhoneInput.value;
+      saveSession();
     });
 
     // Customers screen
@@ -1443,6 +1583,7 @@
         state._saleCustomerName = customer ? customer.name : "";
         state._saleCustomerPhone = customer ? customer.phone : "";
         state._custOpen = "";
+        saveSession();
         go("sale");
       });
     });
@@ -1580,6 +1721,7 @@
       state.cart.push({ productId, qty: 1 });
     }
     toastMessage("تمت الإضافة للسلة");
+    saveSession();
     if (state.view === "sale") render();
   }
 
@@ -1594,11 +1736,13 @@
       return;
     }
     line.qty = next;
+    saveSession();
     render();
   }
 
   function removeFromCart(productId) {
     state.cart = state.cart.filter(item => item.productId !== productId);
+    saveSession();
     render();
   }
 
@@ -1646,7 +1790,14 @@
     });
     state.sales.push(sale);
     state.cart = [];
+    state._saleCustomerName = "";
+    state._saleCustomerPhone = "";
+    state._saleDiscount = 0;
+    state._saleShipping = 0;
+    state._saleTaxFree = false;
+    state._salePayment = "نقدا";
     saveAll();
+    saveSession();
     render();
     showInvoice(sale.id);
     toastMessage("تم إصدار الفاتورة وتحديث المخزون");
