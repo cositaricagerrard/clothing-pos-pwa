@@ -1,4 +1,4 @@
-const CACHE_NAME = "clothing-pos-pwa-v18";
+const CACHE_NAME = "clothing-pos-pwa-v24";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -8,6 +8,7 @@ const CORE_ASSETS = [
   "./manifest.webmanifest",
   "./assets/vendor/pdfmake.min.js",
   "./assets/vendor/pdfmake-fonts.js",
+  "./assets/vendor/qrcode.min.js",
   "./assets/icon-192.png",
   "./assets/icon-512.png",
   "./assets/catalog-preview.png",

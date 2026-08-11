@@ -108,11 +108,54 @@
     <section class="dialog-panel invoice-shell">
       <div id="invoicePrintArea"></div>
       <footer class="dialog-actions no-print">
+        <button class="danger ghost" id="deleteInvoiceButton" type="button">حذف الفاتورة</button>
+        <button class="ghost" id="returnInvoiceButton" type="button">استرجاع</button>
+        <span style="flex:1"></span>
         <button class="ghost" type="button" data-close-dialog>إغلاق</button>
         <button class="ghost" id="shareInvoiceButton" type="button">مشاركة</button>
+        <button class="ghost" id="downloadThermalButton" type="button" title="فاتورة حرارية 80mm للطباعة">حرارية</button>
         <button class="primary" id="downloadInvoiceButton" type="button">تحميل PDF</button>
       </footer>
     </section>
+  </dialog>
+
+  <dialog class="dialog return-dialog" id="returnDialog">
+    <div class="dialog-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">مرتجعات الفاتورة</p>
+          <h2 id="returnDialogTitle">استرجاع أصناف</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <p class="muted" id="returnDialogHint"></p>
+      <div id="returnItemsList"></div>
+      <div class="fields" style="margin-top:10px">
+        <label>سبب الإرجاع (اختياري) <textarea id="returnReason" placeholder="مثلاً: عيب في الصنف أو مقاس غير مناسب"></textarea></label>
+      </div>
+      <div class="return-total" id="returnTotalBox">المجموع المرتجع: <strong></strong></div>
+      <footer class="dialog-actions">
+        <button class="ghost" type="button" data-close-dialog>إلغاء</button>
+        <button class="danger" id="confirmReturnButton" type="button">تأكيد الإرجاع</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="dialog confirm-dialog" id="confirmDialog">
+    <div class="dialog-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">تأكيد الإجراء</p>
+          <h2 id="confirmDialogTitle">تأكيد</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <p class="muted" id="confirmDialogMessage" style="line-height:1.7"></p>
+      <footer class="dialog-actions">
+        <button class="ghost" id="confirmDialogCancel" type="button">إلغاء</button>
+        <button class="danger" id="confirmDialogOk" type="button">تأكيد</button>
+      </footer>
+    </div>
   </dialog>
 
   <dialog class="dialog exit-dialog" id="exitDialog">

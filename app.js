@@ -58,6 +58,7 @@
     _saleShipping: 0,
     _salePayment: "نقدا",
     _saleTaxFree: false,
+    _returnSel: {},
     allowExit: false
   };
 
@@ -82,6 +83,9 @@
   const productForm = document.getElementById("productForm");
   const invoiceDialog = document.getElementById("invoiceDialog");
   const invoicePrintArea = document.getElementById("invoicePrintArea");
+  const returnDialog = document.getElementById("returnDialog");
+  const returnItemsList = document.getElementById("returnItemsList");
+  const confirmDialog = document.getElementById("confirmDialog");
   const toast = document.getElementById("toast");
 
   const moneyFormatter = new Intl.NumberFormat("ar-EG-u-nu-latn", {
@@ -124,8 +128,14 @@
       currency: "ج.م",
       taxRate: 14,
       invoiceFooter: "شكرا لزيارتكم Abo Omar Store. الاستبدال خلال 7 أيام مع الفاتورة.",
+      invoiceTemplate: "classic",
       accent: "#0e5349",
+      docColor: "#075E54",
       logo: "assets/icon-192.png",
+      companyPhone: "",
+      companyAddress: "",
+      taxNumber: "",
+      commercialNumber: "",
       allowTaxFree: false
     };
   }
@@ -147,6 +157,7 @@
     if (state.settings.taxRate === 15) {
       state.settings.taxRate = 14;
     }
+    state.settings = { ...defaultSettings(), ...state.settings };
     saveAll();
     applySettings();
     loadSession();
@@ -290,6 +301,16 @@
     document.getElementById("deleteProductButton").addEventListener("click", deleteProductFromForm);
     document.getElementById("shareInvoiceButton").addEventListener("click", shareInvoice);
     document.getElementById("downloadInvoiceButton").addEventListener("click", downloadInvoicePdf);
+    document.getElementById("downloadThermalButton").addEventListener("click", downloadThermalPdf);
+    document.getElementById("returnInvoiceButton").addEventListener("click", openReturnDialog);
+    document.getElementById("deleteInvoiceButton").addEventListener("click", deleteInvoice);
+    document.getElementById("confirmReturnButton").addEventListener("click", confirmReturn);
+    returnDialog.addEventListener("click", event => {
+      const inc = event.target.closest("[data-ret-inc]");
+      const dec = event.target.closest("[data-ret-dec]");
+      if (inc) changeReturnQty(inc.dataset.retInc, 1);
+      else if (dec) changeReturnQty(dec.dataset.retDec, -1);
+    });
     const themeToggleBtn = document.getElementById("themeToggleBtn");
     if (themeToggleBtn) themeToggleBtn.addEventListener("click", toggleTheme);
     window.addEventListener("hashchange", onHashChange);
@@ -689,14 +710,15 @@
   }
 
   function invoiceRow(sale) {
+    const hasReturns = (sale.returns || []).length > 0;
     return `
       <article class="invoice-row">
         <div>
           <strong>${escapeHtml(sale.number)}</strong>
-          <p class="muted">${dateTime(sale.date)} · ${escapeHtml(sale.customerName || "عميل نقدي")}</p>
+          <p class="muted">${dateTime(sale.date)} · ${escapeHtml(sale.customerName || "عميل نقدي")}${hasReturns ? " · <span class=\"status-pill low\">مرتجع</span>" : ""}</p>
         </div>
         <div class="inline-actions">
-          <strong>${formatMoney(sale.total)}</strong>
+          <strong>${formatMoney(netSale(sale).total)}</strong>
           <button class="ghost" data-view-invoice="${sale.id}" type="button">عرض</button>
         </div>
       </article>
@@ -720,9 +742,10 @@
         };
       }
       const customer = map[name];
+      const net = netSale(sale);
       customer.count += 1;
-      customer.total += Number(sale.total || 0);
-      customer.items += sale.items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+      customer.total += net.total;
+      customer.items += net.qty;
       if (sale.customerPhone?.trim()) customer.phone = sale.customerPhone.trim();
       if (new Date(sale.date) < new Date(customer.firstDate)) customer.firstDate = sale.date;
       if (new Date(sale.date) > new Date(customer.lastDate)) customer.lastDate = sale.date;
@@ -1354,6 +1377,24 @@
         </section>
         <section class="panel">
           <div class="panel-head">
+            <div>
+              <h2>بيانات المنشأة</h2>
+              <p class="muted">تظهر في تذييل الفواتير والتقارير، ويُحذف أي حقل فارغ تلقائياً.</p>
+            </div>
+          </div>
+          <div class="fields">
+            <div class="two">
+              <label>الهاتف <input id="companyPhone" dir="ltr" value="${escapeAttr(state.settings.companyPhone || "")}"></label>
+              <label>السجل التجاري <input id="commercialNumber" dir="ltr" value="${escapeAttr(state.settings.commercialNumber || "")}"></label>
+            </div>
+            <label>العنوان <input id="companyAddress" value="${escapeAttr(state.settings.companyAddress || "")}"></label>
+            <div class="two">
+              <label>الرقم الضريبي <input id="taxNumber" dir="ltr" value="${escapeAttr(state.settings.taxNumber || "")}"></label>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
             <h2>هوية المتجر</h2>
           </div>
           <p class="muted">أضف شعار المتجر ليظهر في الفواتير والتقارير وواجهة التطبيق.</p>
@@ -1370,7 +1411,40 @@
             <input id="accentColor" type="color" value="${escapeAttr(state.settings.accent || "#0e5349")}">
           </label>
           <p class="muted">اختيار لون هادئ وواضح يساعد الكاشير على قراءة الإجراءات بسرعة.</p>
+          <label>لون المستندات (PDF)
+            <input id="docColor" type="color" value="${escapeAttr(state.settings.docColor || "#075E54")}">
+          </label>
+          <p class="muted">اللون الأساسي في رأس وتذييل الفواتير والتقارير المطبوعة. إن لم يُضبط يُستخدم لون التمييز.</p>
           <button class="primary action-wide" type="submit">حفظ الإعدادات</button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>قالب الفاتورة</h2>
+              <p class="muted">اختر التصميم الذي تفضله لفاتورة PDF.</p>
+            </div>
+          </div>
+          <div class="tpl-grid">
+            ${Object.entries(INVOICE_TEMPLATES).map(([id, tpl]) => `
+              <label class="tpl-card">
+                <input type="radio" name="invoiceTemplate" value="${id}" ${state.settings.invoiceTemplate === id ? "checked" : ""}>
+                <span class="tpl-check" aria-hidden="true"></span>
+                <span class="tpl-mini tpl-mini-${id}">
+                  <span class="tpl-logo"></span>
+                  <span class="tpl-s w60"></span>
+                  <span class="tpl-s w45"></span>
+                  <span class="tpl-hd"><span></span><span></span><span></span></span>
+                  <span class="tpl-r"></span>
+                  <span class="tpl-r"></span>
+                </span>
+                <span class="tpl-meta">
+                  <strong>${tpl.label}</strong>
+                  <small>${tpl.desc}</small>
+                </span>
+              </label>
+            `).join("")}
+          </div>
         </section>
 
         <section class="panel">
@@ -1590,6 +1664,13 @@
 
     const settingsForm = document.getElementById("settingsForm");
     if (settingsForm) settingsForm.addEventListener("submit", saveSettings);
+    app.querySelectorAll("input[name='invoiceTemplate']").forEach(input => {
+      input.addEventListener("change", () => {
+        state.settings.invoiceTemplate = input.value;
+        saveAll();
+        toastMessage(`تم اختيار قالب الفاتورة: ${(INVOICE_TEMPLATES[input.value] || {}).label || input.value}`);
+      });
+    });
 
     // Logo upload
     const logoUpload = document.getElementById("logoUpload");
@@ -1821,6 +1902,39 @@
     };
   }
 
+  function saleReturnItems(sale) {
+    return (sale.returns || []).flatMap(ret => ret.items || []);
+  }
+
+  function returnSummary(sale) {
+    const items = saleReturnItems(sale);
+    return {
+      qty: items.reduce((sum, item) => sum + Number(item.qty || 0), 0),
+      amount: items.reduce((sum, item) => sum + Number(item.total != null ? item.total : (item.price || 0) * item.qty), 0),
+      profit: items.reduce((sum, item) => sum + ((Number(item.price || 0) - Number(item.cost || 0)) * Number(item.qty || 0)), 0)
+    };
+  }
+
+  function returnedQtyByProduct(sale) {
+    const map = {};
+    saleReturnItems(sale).forEach(item => {
+      map[item.productId] = (map[item.productId] || 0) + Number(item.qty || 0);
+    });
+    return map;
+  }
+
+  function netSale(sale) {
+    const returns = returnSummary(sale);
+    const soldQty = sale.items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+    const soldProfit = sale.items.reduce((sum, item) => sum + ((Number(item.price || 0) - Number(item.cost || 0)) * Number(item.qty || 0)), 0) - Number(sale.discount || 0);
+    return {
+      total: Number(sale.total || 0) - returns.amount,
+      profit: soldProfit - returns.profit,
+      qty: soldQty - returns.qty,
+      returnAmount: returns.amount
+    };
+  }
+
   function showInvoice(invoiceId) {
     const sale = state.sales.find(item => item.id === invoiceId);
     if (!sale) return;
@@ -1833,26 +1947,35 @@
     const logoHtml = state.settings.logo
       ? `<img class="invoice-logo" src="${escapeAttr(state.settings.logo)}" alt="شعار">`
       : `<div class="invoice-mark">${escapeHtml(state.settings.storeName.charAt(0) || "خ")}</div>`;
+    const net = netSale(sale);
+    const returns = sale.returns || [];
+    const companyLines = companyInfoLines();
     return `
       <article class="invoice-paper">
         <header class="invoice-brand">
           <div>
             <h2>${escapeHtml(state.settings.storeName)}</h2>
-            <p>فاتورة مبيعات أزياء</p>
+            <p>متجر ملابس وأزياء</p>
           </div>
           ${logoHtml}
         </header>
+        <div class="invoice-dochead">
+          <h3>فاتورة مبيعات</h3>
+          <strong>${escapeHtml(sale.number)}</strong>
+          <small>${dateTime(sale.date)}</small>
+        </div>
         <section class="invoice-meta">
-          <p><strong>رقم الفاتورة:</strong> ${escapeHtml(sale.number)}</p>
           <p><strong>التاريخ:</strong> ${dateTime(sale.date)}</p>
+          <p><strong>الدفع:</strong> ${escapeHtml(sale.paymentMethod)}</p>
           <p><strong>العميل:</strong> ${escapeHtml(sale.customerName)}</p>
           <p><strong>الهاتف:</strong> ${escapeHtml(sale.customerPhone || "-")}</p>
-          <p><strong>الدفع:</strong> ${escapeHtml(sale.paymentMethod)}</p>
-          <p><strong>عدد القطع:</strong> ${sale.items.reduce((sum, item) => sum + item.qty, 0)}</p>
+          <p><strong>عدد القطع:</strong> ${net.qty}</p>
         </section>
         <table class="invoice-table">
           <thead>
             <tr>
+              <th>#</th>
+              <th>صورة</th>
               <th>الصنف</th>
               <th>الكمية</th>
               <th>السعر</th>
@@ -1860,16 +1983,38 @@
             </tr>
           </thead>
           <tbody>
-            ${sale.items.map(item => `
+            ${sale.items.map((item, index) => {
+              const product = state.products.find(p => p.id === item.productId);
+              const image = product && product.image ? product.image : "";
+              return `
               <tr>
+                <td>${index + 1}</td>
+                <td class="invoice-thumb">${image ? `<img src="${escapeAttr(image)}" alt="${escapeHtml(item.name)}">` : ""}</td>
                 <td>${escapeHtml(item.name)}<br><small>${escapeHtml(item.sku)}</small></td>
                 <td>${item.qty}</td>
                 <td>${formatMoney(item.price)}</td>
                 <td>${formatMoney(item.total)}</td>
               </tr>
-            `).join("")}
+            `;
+            }).join("")}
           </tbody>
         </table>
+        ${returns.length ? `
+        <section class="invoice-returns">
+          <h3>المرتجعات</h3>
+          ${returns.map(ret => `
+            <div class="return-block">
+              <div class="return-head">
+                <span>${dateTime(ret.date)}</span>
+                ${ret.reason ? `<span class="muted">${escapeHtml(ret.reason)}</span>` : ""}
+                <strong>− ${formatMoney(ret.total)}</strong>
+              </div>
+              <ul>
+                ${ret.items.map(item => `<li>${escapeHtml(item.name)} × ${item.qty} — ${formatMoney(item.total)}</li>`).join("")}
+              </ul>
+            </div>
+          `).join("")}
+        </section>` : ""}
         <section class="cart-totals">
           <div class="total-row"><span>المجموع الفرعي</span><strong>${formatMoney(sale.subtotal)}</strong></div>
           <div class="total-row"><span>الخصم</span><strong>${formatMoney(sale.discount)}</strong></div>
@@ -1877,11 +2022,14 @@
             ? ""
             : `<div class="total-row"><span>ضريبة ${sale.taxRate}%</span><strong>${formatMoney(sale.tax)}</strong></div>`}
           ${sale.shipping ? `<div class="total-row"><span>مصاريف الشحن</span><strong>${formatMoney(sale.shipping)}</strong></div>` : ""}
-          <div class="total-row grand"><span>الإجمالي النهائي</span><strong>${formatMoney(sale.total)}</strong></div>
+          ${net.returnAmount > 0 ? `<div class="total-row return"><span>المجموع المرتجع</span><strong>− ${formatMoney(net.returnAmount)}</strong></div>` : ""}
+          <div class="total-row grand"><span>الإجمالي النهائي</span><strong>${formatMoney(net.total)}</strong></div>
+          <div class="total-row words"><span>المبلغ بالحروف</span><strong>${escapeHtml(amountInWords(net.total))}</strong></div>
         </section>
         <section class="code-strip" aria-label="كود الفاتورة">
           <div class="qr">${qrCells(sale.number)}</div>
           <div class="barcode">${barcodeLines(sale.number)}</div>
+          ${companyLines.length ? `<p>${escapeHtml(companyLines.join("  ·  "))}</p>` : ""}
           <p>${escapeHtml(state.settings.invoiceFooter)}</p>
         </section>
       </article>
@@ -1924,6 +2072,177 @@
       filename: sale.number,
       build: logo => buildInvoiceDoc(sale, logo)
     });
+  }
+
+  async function downloadThermalPdf() {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    await exportPdfWithPdfMake({
+      filename: `${sale.number}-thermal`,
+      build: logo => buildThermalInvoiceDoc(sale, logo)
+    });
+  }
+
+  function returnQtyFor(productId) {
+    return state._returnSel && state._returnSel[productId] ? state._returnSel[productId] : 0;
+  }
+
+  function openReturnDialog() {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    const returned = returnedQtyByProduct(sale);
+    const rows = sale.items.map(item => ({
+      item,
+      maxQty: Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0))
+    })).filter(row => row.maxQty > 0);
+    if (!rows.length) {
+      toastMessage("كل أصناف هذه الفاتورة تم إرجاعها بالفعل");
+      return;
+    }
+    state._returnSel = {};
+    returnItemsList.innerHTML = rows.map(row => `
+      <div class="return-row" data-rid="${row.item.productId}">
+        <div class="return-row-info">
+          <strong>${escapeHtml(row.item.name)}</strong>
+          <small>${formatMoney(row.item.price)} · متاح للإرجاع ${row.maxQty}</small>
+        </div>
+        <div class="qty-controls">
+          <button type="button" data-ret-dec="${row.item.productId}" aria-label="إنقاص">−</button>
+          <strong data-ret-qty="${row.item.productId}">0</strong>
+          <button type="button" data-ret-inc="${row.item.productId}" aria-label="زيادة">+</button>
+        </div>
+      </div>
+    `).join("");
+    document.getElementById("returnDialogHint").textContent = `اختر الكميات المراد إرجاعها من فاتورة ${sale.number}. ستعود القطع إلى المخزون فوراً.`;
+    document.getElementById("returnReason").value = "";
+    updateReturnTotal();
+    returnDialog.showModal();
+  }
+
+  function changeReturnQty(productId, delta) {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    const returned = returnedQtyByProduct(sale);
+    const item = sale.items.find(line => line.productId === productId);
+    if (!item) return;
+    const maxQty = Math.max(0, Number(item.qty || 0) - (returned[productId] || 0));
+    state._returnSel[productId] = Math.max(0, Math.min(maxQty, returnQtyFor(productId) + delta));
+    updateReturnTotal();
+  }
+
+  function updateReturnTotal() {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    const returned = returnedQtyByProduct(sale);
+    let total = 0, count = 0;
+    sale.items.forEach(item => {
+      const maxQty = Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0));
+      const sel = Math.min(returnQtyFor(item.productId), maxQty);
+      state._returnSel[item.productId] = sel;
+      count += sel;
+      total += sel * Number(item.price || 0);
+      const qtyEl = document.querySelector(`[data-ret-qty="${item.productId}"]`);
+      if (qtyEl) qtyEl.textContent = sel;
+    });
+    const totalBox = document.getElementById("returnTotalBox");
+    if (totalBox) totalBox.querySelector("strong").textContent = formatMoney(total);
+    const confirmBtn = document.getElementById("confirmReturnButton");
+    if (confirmBtn) confirmBtn.disabled = count === 0;
+  }
+
+  function confirmReturn() {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    const returned = returnedQtyByProduct(sale);
+    const items = [];
+    let total = 0, count = 0;
+    sale.items.forEach(item => {
+      const maxQty = Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0));
+      const qty = Math.min(returnQtyFor(item.productId), maxQty);
+      if (qty <= 0) return;
+      const lineTotal = qty * Number(item.price || 0);
+      items.push({
+        productId: item.productId,
+        name: item.name,
+        sku: item.sku || "",
+        category: item.category || "غير مصنف",
+        qty,
+        price: Number(item.price || 0),
+        cost: Number(item.cost || 0),
+        total: lineTotal
+      });
+      total += lineTotal;
+      count += qty;
+    });
+    if (!items.length) {
+      toastMessage("اختر قطعة واحدة على الأقل للإرجاع");
+      return;
+    }
+    items.forEach(item => {
+      const product = state.products.find(p => p.id === item.productId);
+      if (product) product.quantity = Number(product.quantity || 0) + item.qty;
+    });
+    sale.returns = sale.returns || [];
+    sale.returns.push({
+      id: cryptoRandomId("r"),
+      date: new Date().toISOString(),
+      reason: (document.getElementById("returnReason")?.value || "").trim(),
+      items,
+      qty: count,
+      total
+    });
+    state._returnSel = {};
+    saveAll();
+    returnDialog.close();
+    render();
+    invoicePrintArea.innerHTML = invoiceHtml(sale);
+    toastMessage(`تم إرجاع ${count} قطعة بقيمة ${formatMoney(total)} للمخزون`);
+  }
+
+  function confirmDialogPrompt(title, message, okLabel) {
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        confirmDialog.close();
+        resolve(value);
+      };
+      document.getElementById("confirmDialogTitle").textContent = title;
+      document.getElementById("confirmDialogMessage").textContent = message;
+      const ok = document.getElementById("confirmDialogOk");
+      ok.textContent = okLabel || "تأكيد";
+      document.getElementById("confirmDialogCancel").onclick = () => finish(false);
+      ok.onclick = () => finish(true);
+      confirmDialog.onclose = () => finish(false);
+      confirmDialog.showModal();
+    });
+  }
+
+  async function deleteInvoice() {
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) return;
+    const net = netSale(sale);
+    const ok = await confirmDialogPrompt(
+      "حذف الفاتورة",
+      `سيتم حذف فاتورة ${sale.number} نهائياً وإرجاع ${net.qty} قطعة إلى المخزون. لا يمكن التراجع عن هذا الإجراء.`,
+      "حذف نهائي"
+    );
+    if (!ok) return;
+    const returned = returnedQtyByProduct(sale);
+    sale.items.forEach(item => {
+      const backQty = Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0));
+      if (backQty <= 0) return;
+      const product = state.products.find(p => p.id === item.productId);
+      if (product) product.quantity = Number(product.quantity || 0) + backQty;
+    });
+    state.sales = state.sales.filter(item => item.id !== sale.id);
+    state.currentInvoiceId = null;
+    state._returnSel = {};
+    saveAll();
+    invoiceDialog.close();
+    render();
+    toastMessage(`تم حذف فاتورة ${sale.number} وإرجاع الكميات للمخزون`);
   }
 
   async function exportPdfWithPdfMake({ filename, build }) {
@@ -1973,7 +2292,7 @@
     }
   }
 
-  async function resolveThumbForPdf(src, size = 60, name = "") {
+  async function resolveThumbForPdf(src, size = 60, name = "", shape = "square") {
     if (!src && !name) return null;
     if (src) {
       try {
@@ -1985,6 +2304,14 @@
         canvas.height = size;
         const ctx = canvas.getContext("2d");
         ctx.imageSmoothingQuality = "high";
+        if (shape === "circle") {
+          ctx.beginPath();
+          ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+          ctx.closePath();
+          ctx.fillStyle = "#ffffff";
+          ctx.fill();
+          ctx.clip();
+        }
         const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
         const drawWidth = image.naturalWidth * scale;
         const drawHeight = image.naturalHeight * scale;
@@ -1992,17 +2319,25 @@
         return canvas.toDataURL("image/jpeg", 0.85);
       } catch (err) { /* canvas tainted أو فشل الرسم — نستخدم البلاطة الاحتياطية */ }
     }
-    return placeholderThumbDataUrl(size, name);
+    return placeholderThumbDataUrl(size, name, shape);
   }
 
-  function placeholderThumbDataUrl(size, name) {
+  function placeholderThumbDataUrl(size, name, shape = "square") {
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d");
     const accent = state.settings.accent || "#0e5349";
+    if (shape === "circle") {
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.closePath();
+    } else {
+      ctx.beginPath();
+      ctx.rect(0, 0, size, size);
+    }
     ctx.fillStyle = accent;
-    ctx.fillRect(0, 0, size, size);
+    ctx.fill();
     ctx.fillStyle = "#ffffff";
     ctx.font = `bold ${Math.floor(size * 0.48)}px Cairo, Arial, sans-serif`;
     ctx.textAlign = "center";
@@ -2029,6 +2364,20 @@
           if (window.vfs) window.pdfMake.vfs = window.vfs;
           else if (!window.pdfMake.vfs) window.pdfMake.vfs = {};
         }
+        if (window.pdfMake.fonts) {
+          window.pdfMake.fonts["CairoSemiBold"] = {
+            normal: "Cairo-SemiBold.ttf",
+            bold: "Cairo-SemiBold.ttf",
+            italics: "Cairo-SemiBold.ttf",
+            bolditalics: "Cairo-SemiBold.ttf"
+          };
+          window.pdfMake.fonts["CairoLight"] = {
+            normal: "Cairo-Light.ttf",
+            bold: "Cairo-Light.ttf",
+            italics: "Cairo-Light.ttf",
+            bolditalics: "Cairo-Light.ttf"
+          };
+        }
       });
   }
 
@@ -2049,97 +2398,623 @@
     });
   }
 
-  async function buildInvoiceDoc(sale, logo) {
-    const accent = state.settings.accent || "#0e5349";
-    const light = shadeHex(accent, 0.92);
-    const money = formatMoney;
-    const pieceCount = sale.items.reduce((sum, item) => sum + item.qty, 0);
-
-    const header = { stack: [], margin: [0, 0, 0, 10] };
-    if (logo) header.stack.push({ image: logo, width: 42, alignment: "center", margin: [0, 0, 0, 4] });
-    header.stack.push({ text: state.settings.storeName, fontSize: 22, bold: true, color: accent, alignment: "center" });
-    header.stack.push({ text: "فاتورة مبيعات أزياء", fontSize: 11, color: "#6b7280", alignment: "center", margin: [0, 2, 0, 0] });
-
-    const meta = (label, value) => ({ text: label, bold: true, color: accent, alignment: "center", fillColor: light });
-    const metaValue = value => ({ text: value, alignment: "center", bold: true, margin: [2, 3, 2, 3] });
-    const metaBody = [
-      [
-        meta("رقم الفاتورة"), metaValue(sale.number),
-        meta("التاريخ"), metaValue(dateTime(sale.date)),
-        meta("طريقة الدفع"), metaValue(sale.paymentMethod || "نقدا")
-      ],
-      [
-        meta("العميل"), metaValue(sale.customerName || "عميل نقدي"),
-        meta("الهاتف"), metaValue(sale.customerPhone || "-"),
-        meta("عدد القطع"), metaValue(`${pieceCount} قطعة`)
-      ]
-    ];
-
-    const thumbs = await Promise.all(sale.items.map(item => {
-      const product = state.products.find(p => p.id === item.productId);
-      return resolveThumbForPdf(item.image || (product && product.image), 60, item.name);
-    }));
-
-    const itemsBody = [
-      pdfHeaderRow(["الصورة", "الصنف", "الكمية", "السعر", "الإجمالي"], accent),
-      ...sale.items.map((item, index) => [
-        thumbs[index]
-          ? { image: thumbs[index], width: 30, height: 30, alignment: "center", margin: [2, 2, 2, 2] }
-          : { text: "", margin: [2, 3, 2, 3] },
-        { text: item.name, bold: true, margin: [2, 3, 2, 3] },
-        { text: `${item.qty}`, alignment: "center", margin: [2, 3, 2, 3] },
-        { text: money(item.price), alignment: "center", margin: [2, 3, 2, 3] },
-        { text: money(item.total), alignment: "center", bold: true, margin: [2, 3, 2, 3] }
-      ])
-    ];
-
-    const totalRows = [
-      ["المجموع الفرعي", money(sale.subtotal)],
-      ["الخصم", money(sale.discount)],
-      ...(sale.taxFree ? [] : [["الضريبة", money(sale.tax)]]),
-      ...(sale.shipping ? [["مصاريف الشحن", money(sale.shipping)]] : [])
-    ];
-    const totalsBody = [
-      ...totalRows.map(row => [
-        { text: row[0], bold: true, margin: [2, 3, 2, 3] },
-        { text: row[1], alignment: "center", bold: true, margin: [2, 3, 2, 3] }
-      ]),
-      [
-        { text: "الإجمالي النهائي", bold: true, color: "#ffffff", fillColor: accent, alignment: "center", margin: [2, 4, 2, 4] },
-        { text: money(sale.total), bold: true, color: "#ffffff", fillColor: accent, alignment: "center", margin: [2, 4, 2, 4] }
-      ]
-    ];
-
-    const footer = { stack: [], margin: [0, 14, 0, 0] };
-    if (state.settings.invoiceFooter) {
-      footer.stack.push({ text: state.settings.invoiceFooter, alignment: "center", fontSize: 9, color: "#6b7280", margin: [0, 0, 0, 3] });
+  const INVOICE_TEMPLATES = {
+    classic: {
+      label: "كلاسيكي",
+      desc: "تصميم هادئ مريح ببطاقات فاتحة",
+      headerStyle: "plain",
+      logoSize: 62,
+      storeFont: "Cairo",
+      storeSize: 23,
+      storeColor: null,
+      subColor: "#6b7280",
+      ruleColor: null,
+      ruleThickness: 2.4,
+      metaStyle: "fill",
+      metaFill: "light",
+      metaTitleColor: null,
+      metaLabelColor: "#6b7280",
+      metaValueColor: "#111827",
+      sectionTitleFont: "Cairo",
+      sectionTitleSize: 11.5,
+      sectionTitleColor: null,
+      headerBar: { fill: null, text: "#ffffff", font: "Cairo", size: 9, padding: 6 },
+      tableStripes: true,
+      itemNameFont: "Cairo",
+      itemNameSize: 9.5,
+      itemMetaColor: "#9ca3af",
+      totalsStyle: "card",
+      totalsWidth: 240,
+      totalRowColor: "#374151",
+      grandStyle: "accent",
+      grandText: "#ffffff",
+      footerRule: "#E5E7EB",
+      footerTextColor: "#6b7280",
+      thanksColor: "#9ca3af"
+    },
+    modern: {
+      label: "عصري",
+      desc: "شريط علوي بلون المتجر ورأس جدول بارز",
+      headerStyle: "band",
+      logoSize: 54,
+      storeFont: "CairoSemiBold",
+      storeSize: 26,
+      storeColor: "#ffffff",
+      subColor: "#dce8e4",
+      ruleColor: "#ffffff",
+      ruleThickness: 2.6,
+      metaStyle: "border",
+      metaFill: "white",
+      metaTitleColor: null,
+      metaLabelColor: "#6b7280",
+      metaValueColor: "#111827",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: null,
+      headerBar: { fill: null, text: "#ffffff", font: "CairoSemiBold", size: 9.5, padding: 7 },
+      tableStripes: true,
+      itemNameFont: "CairoSemiBold",
+      itemNameSize: 10,
+      itemMetaColor: "#9ca3af",
+      totalsStyle: "card",
+      totalsWidth: "full",
+      totalRowColor: "#374151",
+      grandStyle: "accent",
+      grandText: "#ffffff",
+      footerRule: "#E5E7EB",
+      footerTextColor: "#6b7280",
+      thanksColor: "#9ca3af"
+    },
+    minimal: {
+      label: "بسيط",
+      desc: "مساحات بيضاء واسعة وخطوط رفيعة",
+      headerStyle: "plain",
+      logoSize: 58,
+      storeFont: "CairoLight",
+      storeSize: 27,
+      storeColor: "#1f2937",
+      subColor: "#9ca3af",
+      ruleColor: "#e5e7eb",
+      ruleThickness: 1,
+      metaStyle: "plain",
+      metaFill: "none",
+      metaTitleColor: "#1f2937",
+      metaLabelColor: "#9ca3af",
+      metaValueColor: "#111827",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: "#1f2937",
+      headerBar: { fill: null, text: null, font: "CairoSemiBold", size: 8.5, padding: 5 },
+      tableStripes: false,
+      itemNameFont: "Cairo",
+      itemNameSize: 10,
+      itemMetaColor: "#9ca3af",
+      totalsStyle: "plain",
+      totalsWidth: 240,
+      totalRowColor: "#6b7280",
+      grandStyle: "text",
+      grandText: null,
+      footerRule: "#eeeeee",
+      footerTextColor: "#9ca3af",
+      thanksColor: "#b6bcc2"
+    },
+    luxury: {
+      label: "فاخر",
+      desc: "شريط داكن أنيق بلمسات ذهبية",
+      headerStyle: "dark-band",
+      logoSize: 58,
+      storeFont: "CairoSemiBold",
+      storeSize: 24,
+      storeColor: "#d4b483",
+      subColor: "#c6b491",
+      ruleColor: "#b08d57",
+      ruleThickness: 1.2,
+      gold: "#b08d57",
+      metaStyle: "gold",
+      metaFill: "none",
+      metaTitleColor: null,
+      metaLabelColor: "#8a857b",
+      metaValueColor: "#22211d",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: null,
+      headerBar: { fill: "#efe5cf", text: "#8a6d3b", font: "CairoSemiBold", size: 9, padding: 6 },
+      tableStripes: false,
+      itemNameFont: "CairoSemiBold",
+      itemNameSize: 9.5,
+      itemMetaColor: "#9ca3af",
+      totalsStyle: "plain-gold",
+      totalsWidth: 240,
+      totalRowColor: "#55504a",
+      grandStyle: "gold",
+      grandText: "#ffffff",
+      footerRule: "#e4d8bd",
+      footerTextColor: "#8a857b",
+      thanksColor: "#b08d57"
     }
-    footer.stack.push({ text: "شكراً لتعاملكم معنا", alignment: "center", fontSize: 9, color: "#6b7280" });
+  };
+
+  function pdfColor(color, accent) {
+    return (color === null || color === undefined) ? accent : color;
+  }
+
+  async function buildInvoiceDoc(sale, logo) {
+    const tpl = INVOICE_TEMPLATES[state.settings.invoiceTemplate] || INVOICE_TEMPLATES.classic;
+    return buildInvoiceByTemplate(sale, logo, tpl);
+  }
+
+  async function buildInvoiceByTemplate(sale, logo, tpl) {
+    const accent = docAccent();
+    const net = netSale(sale);
+    const returns = sale.returns || [];
+    const pieceCount = net.qty;
+    const compact = returns.length > 0;
+    const companyLines = companyInfoLines();
+
+    let qr = null;
+    try {
+      qr = await qrDataUrl(invoiceQrText(sale), 220);
+    } catch (err) {
+      console.warn("QR skipped:", err);
+    }
+
+    // ---- Brand header (right) + document title (left)
+    const brandStack = [];
+    if (logo) brandStack.push({ image: logo, width: compact ? 42 : 54, alignment: "center", margin: [0, 0, 0, compact ? 2 : 5] });
+    brandStack.push({ text: state.settings.storeName, fontSize: compact ? 14 : 18, bold: true, font: "CairoSemiBold", color: accent, alignment: "center" });
+    brandStack.push({ text: "متجر ملابس وأزياء", fontSize: 9, color: "#64748B", alignment: "center", margin: [0, compact ? 1 : 2, 0, 0] });
+
+    const docTitleStack = [
+      { text: "فاتورة مبيعات", fontSize: compact ? 14 : 19, bold: true, font: "CairoSemiBold", color: accent, alignment: "left" },
+      { text: sale.number, fontSize: compact ? 10 : 12, bold: true, color: "#1F2937", alignment: "left", margin: [0, compact ? 2 : 3, 0, 0] },
+      { text: dateTime(sale.date), fontSize: 8.5, color: "#64748B", alignment: "left", margin: [0, compact ? 1 : 2, 0, 0] },
+      ...(sale.paymentMethod ? [{ text: `طريقة الدفع: ${sale.paymentMethod}`, fontSize: 8.5, color: "#64748B", alignment: "left", margin: [0, compact ? 1 : 2, 0, 0] }] : [])
+    ];
+
+    const header = {
+      layout: {
+        defaultBorder: false,
+        paddingLeft: () => 14,
+        paddingRight: () => 14,
+        paddingTop: () => (compact ? 7 : 10),
+        paddingBottom: () => (compact ? 7 : 10)
+      },
+      table: { headerRows: 0, widths: ["*"], body: [[{ columns: [docTitleStack, brandStack], columnGap: 8, fillColor: shadeHex(accent, 0.95) }]] },
+      margin: [0, 0, 0, compact ? 4 : 8]
+    };
+    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1.2, lineColor: accent }], margin: [0, 0, 0, compact ? 4 : 8] };
+
+    // ---- Info cards
+    const infoSection = {
+      columns: [
+        { width: "*", ...pdfSoftCard([
+          { text: "بيانات الفاتورة", fontSize: compact ? 9 : 10.5, bold: true, font: "CairoSemiBold", color: accent, margin: [0, 0, 0, compact ? 3 : 5] },
+          ...[
+            ["التاريخ", dateTime(sale.date)],
+            ["طريقة الدفع", sale.paymentMethod || "نقدا"],
+            ["عدد القطع", `${pieceCount} قطعة`]
+          ].map(row => pdfInfoRow(row[0], row[1], compact))
+        ], compact) },
+        { width: "*", ...pdfSoftCard([
+          { text: "بيانات العميل", fontSize: compact ? 9 : 10.5, bold: true, font: "CairoSemiBold", color: accent, margin: [0, 0, 0, compact ? 3 : 5] },
+          ...[
+            ["الاسم", sale.customerName || "عميل نقدي"],
+            ["الهاتف", sale.customerPhone || "—"]
+          ].map(row => pdfInfoRow(row[0], row[1], compact))
+        ], compact) }
+      ],
+      columnGap: 8,
+      margin: [0, compact ? 2 : 6, 0, compact ? 2 : 8]
+    };
+
+    // ---- Items table (numbered, soft borders, product thumbnails)
+    const itemThumbs = await Promise.all(sale.items.map(item => {
+      const product = state.products.find(p => p.id === item.productId);
+      return resolveThumbForPdf(product ? product.image : "", compact ? 24 : 30, product ? product.name : item.name);
+    }));
+    const thumbSize = compact ? 24 : 28;
+    const itemsBody = [
+      pdfItemsHeader(["الإجمالي", "السعر", "الكمية", "الصنف", "صورة", "#"], accent, compact),
+      ...sale.items.map((item, index) => {
+        const product = state.products.find(p => p.id === item.productId);
+        const sku = product ? product.sku : (item.sku || "");
+        const size = product ? product.size : "";
+        const metaLine = [sku, size].filter(Boolean).join(" · ");
+        return [
+          { text: pdfMoneyParts(item.total, { bold: true }), alignment: "center", margin: [2, 2, 2, 2] },
+          { text: pdfMoneyParts(item.price), alignment: "center", margin: [2, 2, 2, 2] },
+          { text: `${item.qty}`, alignment: "center", bold: true, fontSize: 9.5, margin: [2, 2, 2, 2] },
+          {
+            stack: [
+              { text: item.name, bold: true, fontSize: 9.5, font: "Cairo", color: "#1F2937", lineHeight: 1.2 },
+              { text: metaLine, fontSize: 7.5, color: "#94A3B8", margin: compact ? [0, 1, 0, 0] : [0, 2, 0, 0] }
+            ],
+            alignment: "right",
+            margin: [2, 2, 2, 2]
+          },
+          { image: itemThumbs[index], width: thumbSize, height: thumbSize, alignment: "center", margin: [2, 2, 2, 2] },
+          { text: String(index + 1), alignment: "center", bold: true, color: "#64748B", fontSize: 9, margin: [2, 2, 2, 2] }
+        ];
+      })
+    ];
+
+    const itemsTable = pdfTable(itemsBody, [64, 56, 30, "*", 30, 20], {
+      layout: pdfItemsLayout(accent, compact),
+      headerRows: 1
+    });
+
+    // ---- Totals + amount in words + QR
+    const totalRows = [
+      ["المجموع الفرعي", sale.subtotal],
+      ["الخصم", sale.discount],
+      ...(sale.taxFree ? [] : [["الضريبة", sale.tax]]),
+      ...(sale.shipping ? [["مصاريف الشحن", sale.shipping]] : [])
+    ];
+    const returnRow = net.returnAmount > 0
+      ? [
+        { text: pdfMoneyParts(-net.returnAmount, { color: "#B91C1C", bold: true }), alignment: "left", margin: [6, 4, 6, 4] },
+        { text: "المجموع المرتجع", color: "#B91C1C", bold: true, fontSize: 9, alignment: "right", margin: [6, 4, 6, 4] }
+      ]
+      : null;
+
+    const totalsInner = {
+      layout: "noBorders",
+      table: {
+        headerRows: 0,
+        widths: [130, "*"],
+        body: [
+          ...totalRows.map(row => [
+            { text: pdfMoneyParts(row[1], { color: "#1F2937" }), alignment: "left", margin: [6, 4, 6, 4] },
+            { text: row[0], color: "#64748B", fontSize: 9, alignment: "right", margin: [6, 4, 6, 4] }
+          ]),
+          ...(returnRow ? [returnRow] : []),
+          [
+            { text: pdfMoneyParts(net.total, { color: "#ffffff", currencyColor: "#d7e0dd", size: 11 }), alignment: "left", bold: true, fillColor: accent, margin: [8, 7, 8, 7] },
+            { text: "الإجمالي النهائي", bold: true, color: "#ffffff", fillColor: accent, font: "CairoSemiBold", fontSize: 11, alignment: "right", margin: [8, 7, 8, 7] }
+          ],
+          [
+            { text: "المبلغ بالحروف", color: "#64748B", fontSize: 8, margin: [6, 8, 6, 0], colSpan: 2 },
+            ""
+          ],
+          [
+            { text: amountInWords(net.total), bold: true, color: "#1F2937", fontSize: 8.5, margin: [6, 2, 6, 8], colSpan: 2 },
+            ""
+          ]
+        ]
+      }
+    };
+
+    const totalsNode = {
+      unbreakable: true,
+      columns: [
+        ...(qr ? [{
+          width: compact ? 82 : 104,
+          stack: [
+            { image: qr, width: compact ? 66 : 88, height: compact ? 66 : 88, alignment: "center" },
+            { text: "امسح للتحقق", fontSize: 7, color: "#64748B", alignment: "center", margin: [0, 4, 0, 0] }
+          ],
+          alignment: "center"
+        }] : []),
+        { width: "*", ...pdfSoftCard([totalsInner], compact) }
+      ],
+      columnGap: 10,
+      margin: [0, compact ? 5 : 10, 0, 0]
+    };
+
+    // ---- Returns section
+    const pdfReturnsBlock = () => {
+      const rows = [];
+      returns.forEach(ret => {
+        const reason = (ret.reason || "").trim();
+        rows.push([
+          { text: `مرتجع — ${dateTime(ret.date)}${reason ? `  |  السبب: ${reason}` : ""}`, fontSize: 8, bold: true, color: "#B91C1C", colSpan: 4, fillColor: "#FEE2E2", margin: [6, 2, 6, 2] },
+          "", "", ""
+        ]);
+        ret.items.forEach(item => {
+          rows.push([
+            { text: pdfMoneyParts(item.total, { color: "#B91C1C", bold: true }), alignment: "center", margin: [2, 1, 2, 1] },
+            { text: pdfMoneyParts(item.price), alignment: "center", margin: [2, 1, 2, 1] },
+            { text: `${item.qty}`, alignment: "center", fontSize: 8, bold: true, margin: [2, 1, 2, 1] },
+            { text: item.name, fontSize: 8, color: "#374151", alignment: "right", margin: [2, 1, 2, 1] }
+          ]);
+        });
+      });
+      const retHeader = (label) => ({ text: label, bold: true, color: "#B91C1C", fillColor: "#FEE2E2", alignment: "center", fontSize: 8, margin: [4, 3, 4, 3] });
+      const retLayout = {
+        ...pdfTableLayoutPlain(),
+        paddingTop: () => 1,
+        paddingBottom: () => 1,
+        hLineWidth: () => 0.3
+      };
+      return {
+        unbreakable: true,
+        stack: [
+          { text: "المرتجعات", fontSize: compact ? 9 : 11, bold: true, font: "CairoSemiBold", color: "#B91C1C", margin: compact ? [0, 2, 0, 2] : [0, 4, 0, 4] },
+          pdfTable([
+            [retHeader("الإجمالي"), retHeader("السعر"), retHeader("الكمية"), retHeader("الصنف")],
+            ...rows
+          ], [66, 58, 30, "*"], { layout: retLayout, headerRows: 1, margin: [0, 0, 0, 2] })
+        ]
+      };
+    };
+
+    const sectionTitle = (text, color) => ({
+      text,
+      fontSize: compact ? 9.5 : 11.5,
+      bold: true,
+      font: "CairoSemiBold",
+      color: color || accent,
+      margin: [0, compact ? 2 : 4, 0, compact ? 2 : 4]
+    });
 
     return {
       rtl: true,
       pageSize: "A4",
-      pageMargins: [14, 12, 14, 16],
-      defaultStyle: { font: "Cairo", fontSize: 10 },
+      pageMargins: compact ? [12, 24, 12, 60] : [16, 26, 16, 64],
+      defaultStyle: { font: "Cairo", fontSize: 9.5 },
       content: [
         header,
-        { table: { headerRows: 0, widths: ["*", "*", "*", "*", "*", "*"], body: metaBody }, margin: [0, 0, 0, 0] },
-        { text: "تفاصيل الفاتورة", fontSize: 11, bold: true, color: accent, margin: [0, 12, 0, 4] },
-        { table: { headerRows: 1, widths: [36, "*", 30, 55, 55], body: itemsBody } },
-        { table: { headerRows: 0, widths: ["*", "*"], body: totalsBody }, margin: [0, 12, 0, 0] },
-        footer
+        headerRule,
+        infoSection,
+        sectionTitle("تفاصيل الفاتورة"),
+        itemsTable,
+        ...(returns.length ? [pdfReturnsBlock()] : []),
+        totalsNode
       ],
-      footer: currentPage => ({
-        text: `${state.settings.storeName} — ${sale.number} — صفحة ${currentPage}`,
-        alignment: "center",
-        fontSize: 8,
-        color: "#9ca3af",
-        margin: [0, 6, 0, 0]
+      header: currentPage => {
+        if (currentPage <= 1) return null;
+        return {
+          margin: [16, 10, 16, 0],
+          columns: [
+            { text: `${sale.number} — فاتورة مبيعات`, color: "#64748B", fontSize: 8.5, alignment: "left", width: "auto" },
+            { text: state.settings.storeName, bold: true, color: accent, fontSize: 9, alignment: "right", width: "*" }
+          ]
+        };
+      },
+      footer: (currentPage, pageCount) => ({
+        stack: [
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: "#E5E7EB" }] },
+          ...(companyLines.length ? [{ text: companyLines.join("   |   "), alignment: "center", fontSize: 7.5, color: "#64748B", margin: [0, 4, 0, 0] }] : []),
+          ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, alignment: "center", fontSize: 7.5, color: "#94A3B8", margin: [0, 2, 0, 0] }] : []),
+          { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 7.5, color: "#94A3B8", margin: [0, 2, 0, 0] }
+        ],
+        margin: [compact ? 12 : 16, 6, compact ? 12 : 16, 0]
       }),
       info: {
         title: `${sale.number} - ${state.settings.storeName}`,
         author: state.settings.storeName
       }
+    };
+  }
+
+  async function buildThermalInvoiceDoc(sale, logo) {
+    const accent = docAccent();
+    const net = netSale(sale);
+    const returns = sale.returns || [];
+    const W = 227;
+    const M = 10;
+    const companyLines = companyInfoLines();
+    const moneyText = (value, opts = {}) => ({
+      text: `${moneyFormatter.format(Number(value || 0))} ${state.settings.currency}`,
+      bold: !!opts.bold,
+      font: opts.bold ? "CairoSemiBold" : "Cairo",
+      color: opts.color || "#111827",
+      fontSize: opts.size || 9
+    });
+
+    let qr = null;
+    try {
+      qr = await qrDataUrl(invoiceQrText(sale), 180);
+    } catch (err) {
+      console.warn("QR skipped:", err);
+    }
+
+    const rule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: W - M * 2, y2: 0, lineWidth: 0.7, lineColor: "#CBD5E1" }], margin: [0, 4, 0, 4] };
+    const dotted = { canvas: [{ type: "line", x1: 0, y1: 0, x2: W - M * 2, y2: 0, lineWidth: 0.5, lineColor: "#CBD5E1", dash: { length: 2 } }], margin: [0, 3, 0, 3] };
+
+    const metaRow = (label, value) => ({
+      columns: [
+        { text: String(value), bold: true, font: "CairoSemiBold", fontSize: 9, color: "#1F2937", alignment: "left", width: "auto" },
+        { text: label, color: "#64748B", fontSize: 8.5, alignment: "right", width: "*" }
+      ],
+      margin: [0, 1.5, 0, 1.5]
+    });
+
+    const itemRows = [
+      [
+        { text: "الإجمالي", bold: true, color: accent, fontSize: 8, alignment: "left" },
+        { text: "السعر", bold: true, color: accent, fontSize: 8, alignment: "center" },
+        { text: "كمية", bold: true, color: accent, fontSize: 8, alignment: "center" },
+        { text: "الصنف", bold: true, color: accent, fontSize: 8, alignment: "right" },
+        { text: "#", bold: true, color: accent, fontSize: 8, alignment: "center" }
+      ],
+      ...sale.items.map((item, index) => {
+        const product = state.products.find(p => p.id === item.productId);
+        const metaLine = [product ? product.sku : (item.sku || ""), product ? product.size : ""].filter(Boolean).join(" · ");
+        return [
+          { ...moneyText(item.total, { size: 8, bold: true }), alignment: "left" },
+          { text: moneyText(item.price, { size: 8 }).text, fontSize: 8, alignment: "center" },
+          { text: String(item.qty), fontSize: 8.5, alignment: "center" },
+          {
+            stack: [
+              { text: item.name, fontSize: 8.5, bold: true, color: "#1F2937" },
+              ...(metaLine ? [{ text: metaLine, fontSize: 6.5, color: "#94A3B8", margin: [0, 1, 0, 0] }] : [])
+            ],
+            alignment: "right"
+          },
+          { text: String(index + 1), color: "#64748B", fontSize: 8, alignment: "center" }
+        ];
+      })
+    ];
+
+    const itemsTable = {
+      layout: {
+        hLineWidth: () => 0,
+        vLineWidth: () => 0,
+        paddingLeft: () => 2,
+        paddingRight: () => 2,
+        paddingTop: () => 2.5,
+        paddingBottom: () => 2.5
+      },
+      table: { headerRows: 1, widths: [52, 44, 20, "*", 14], body: itemRows },
+      margin: [0, 2, 0, 0]
+    };
+
+    const totalsBody = [
+      ...[
+        ["المجموع الفرعي", sale.subtotal, {}],
+        ["الخصم", sale.discount, {}],
+        ...(sale.taxFree ? [] : [["الضريبة", sale.tax, {}]]),
+        ...(sale.shipping ? [["مصاريف الشحن", sale.shipping, {}]] : [])
+      ].map(([label, value]) => ({
+        columns: [
+          { ...moneyText(value, { size: 8.5 }), alignment: "left", width: "auto" },
+          { text: label, color: "#475569", fontSize: 8.5, alignment: "right", width: "*" }
+        ],
+        margin: [0, 1.5, 0, 1.5]
+      })),
+      ...(net.returnAmount > 0 ? [{
+        columns: [
+          { ...moneyText(-net.returnAmount, { size: 8.5, bold: true, color: "#B91C1C" }), alignment: "left", width: "auto" },
+          { text: "المجموع المرتجع", color: "#B91C1C", bold: true, fontSize: 8.5, alignment: "right", width: "*" }
+        ],
+        margin: [0, 1.5, 0, 1.5]
+      }] : []),
+      rule,
+      {
+        columns: [
+          { ...moneyText(net.total, { size: 11, bold: true, color: accent }), alignment: "left", width: "auto" },
+          { text: "الإجمالي النهائي", bold: true, font: "CairoSemiBold", fontSize: 11, color: accent, alignment: "right", width: "*" }
+        ]
+      },
+      {
+        columns: [
+          { text: amountInWords(net.total), fontSize: 8, color: "#1F2937", alignment: "left", width: "*", lineHeight: 1.4 },
+          { text: "المبلغ بالحروف", color: "#64748B", fontSize: 8, alignment: "right", width: "auto" }
+        ],
+        margin: [0, 4, 0, 0]
+      }
+    ];
+
+    const returnsBlock = returns.length ? [
+      dotted,
+      { text: "المرتجعات", bold: true, font: "CairoSemiBold", color: "#B91C1C", fontSize: 8.5, margin: [0, 0, 0, 2] },
+      ...returns.flatMap(ret => [
+        {
+          columns: [
+            { text: `− ${moneyFormatter.format(Number(ret.total || 0))} ${state.settings.currency}`, bold: true, color: "#B91C1C", fontSize: 7.5, width: "auto", alignment: "left" },
+            { text: `${dateTime(ret.date)}${ret.reason ? ` — ${ret.reason}` : ""}`, color: "#B91C1C", fontSize: 7.5, alignment: "right", width: "*" }
+          ],
+          margin: [0, 1, 0, 1]
+        },
+        ...ret.items.map(item => ({
+          text: `× ${item.qty} ${item.name} — ${moneyFormatter.format(Number(item.total || 0))} ${state.settings.currency}`,
+          fontSize: 7,
+          color: "#B91C1C",
+          margin: [4, 0.5, 0, 0.5]
+        }))
+      ])
+    ] : [];
+
+    const qrBlock = qr ? [
+      dotted,
+      { image: qr, width: 92, alignment: "center", margin: [0, 2, 0, 2] },
+      { text: "امسح للتحقق من الفاتورة", fontSize: 6.5, color: "#94A3B8", alignment: "center", margin: [0, 0, 0, 2] }
+    ] : [];
+
+    const footerBlock = [
+      rule,
+      ...(companyLines.length ? [{ text: companyLines.join("   |   "), fontSize: 6.5, color: "#64748B", alignment: "center", lineHeight: 1.4, margin: [0, 2, 0, 1] }] : []),
+      ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, fontSize: 6.5, color: "#94A3B8", alignment: "center", lineHeight: 1.4, margin: [0, 1, 0, 1] }] : [])
+    ];
+
+    const returnExtraRows = returns.reduce((sum, ret) => sum + 1 + ret.items.length, 0);
+    const estimatedHeight = Math.round(
+      510 +
+      sale.items.length * 18 +
+      returnExtraRows * 12 +
+      (qr ? 124 : 0)
+    );
+
+    return {
+      rtl: true,
+      pageSize: { width: W, height: estimatedHeight },
+      pageMargins: [M, 12, M, 12],
+      content: [
+        ...(logo ? [{ image: logo, width: 46, alignment: "center", margin: [0, 0, 0, 4] }] : []),
+        { text: state.settings.storeName, fontSize: 13, bold: true, font: "CairoSemiBold", color: accent, alignment: "center" },
+        { text: "متجر ملابس وأزياء", fontSize: 7.5, color: "#64748B", alignment: "center", margin: [0, 1, 0, 0] },
+        rule,
+        metaRow("فاتورة", sale.number),
+        metaRow("التاريخ", dateTime(sale.date)),
+        ...(sale.paymentMethod ? [metaRow("طريقة الدفع", sale.paymentMethod)] : []),
+        metaRow("العميل", sale.customerName || "عميل نقدي"),
+        ...(sale.customerPhone ? [metaRow("الهاتف", sale.customerPhone)] : []),
+        dotted,
+        itemsTable,
+        ...returnsBlock,
+        ...totalsBody,
+        ...qrBlock,
+        ...footerBlock
+      ],
+      info: {
+        title: `${sale.number} - ${state.settings.storeName}`,
+        author: state.settings.storeName
+      }
+    };
+  }
+
+  function pdfInfoRow(label, value, compact) {
+    return {
+      columns: [
+        { text: String(value), bold: true, font: "CairoSemiBold", fontSize: 9.5, color: "#1F2937", alignment: "left", width: "auto" },
+        { text: label, color: "#64748B", fontSize: 8.5, alignment: "right", width: "*" }
+      ],
+      margin: [0, compact ? 1 : 2, 0, compact ? 1 : 2]
+    };
+  }
+
+  function pdfSoftCard(stack, compact) {
+    const pad = compact ? 10 : 14;
+    return {
+      layout: {
+        defaultBorder: false,
+        hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.6 : 0,
+        hLineColor: () => "#E5E7EB",
+        vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length) ? 0.6 : 0,
+        vLineColor: () => "#E5E7EB",
+        paddingLeft: () => pad,
+        paddingRight: () => pad,
+        paddingTop: () => (compact ? 6 : 9),
+        paddingBottom: () => (compact ? 6 : 9)
+      },
+      table: { headerRows: 0, widths: ["*"], body: [[{ stack, fillColor: "#F8FAFC" }]] }
+    };
+  }
+
+  function pdfItemsHeader(labels, accent, compact) {
+    return labels.map(label => ({
+      text: label,
+      bold: true,
+      font: "CairoSemiBold",
+      color: accent,
+      alignment: "center",
+      fontSize: compact ? 8 : 9,
+      margin: [4, compact ? 3 : 6, 4, compact ? 3 : 6]
+    }));
+  }
+
+  function pdfItemsLayout(accent, compact) {
+    return {
+      defaultBorder: false,
+      hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.7 : 0.35,
+      hLineColor: () => "#E5E7EB",
+      vLineWidth: () => 0,
+      paddingLeft: () => 6,
+      paddingRight: () => 6,
+      paddingTop: () => (compact ? 4 : 6),
+      paddingBottom: () => (compact ? 4 : 6),
+      fillColor: rowIndex => (rowIndex === 0) ? shadeHex(accent, 0.95) : null
     };
   }
 
@@ -2173,23 +3048,24 @@
     const typeInfo = reportTypes.find(t => t.id === type) || reportTypes[0];
     const filterSummary = reportFilterSummary();
 
-    const header = { stack: [], margin: [0, 0, 0, 8] };
-    if (logo) header.stack.push({ image: logo, width: 34, alignment: "center", margin: [0, 0, 0, 3] });
-    header.stack.push({ text: state.settings.storeName, fontSize: 18, bold: true, color: accent, alignment: "center" });
-    header.stack.push({ text: typeInfo.label, fontSize: 13, bold: true, alignment: "center", margin: [0, 2, 0, 0] });
+    const header = { stack: [], margin: [0, 0, 0, 4] };
+    if (logo) header.stack.push({ image: logo, width: 44, alignment: "center", margin: [0, 0, 0, 4] });
+    header.stack.push({ text: state.settings.storeName, fontSize: 19, bold: true, color: accent, alignment: "center" });
+    header.stack.push({ text: typeInfo.label, fontSize: 13, bold: true, alignment: "center", margin: [0, 3, 0, 0] });
     header.stack.push({
       text: `الفترة: ${reportPeriodLabel()}${filterSummary ? `  |  ${filterSummary}` : ""}`,
       fontSize: 8.5,
       color: "#6b7280",
       alignment: "center",
-      margin: [0, 3, 0, 0]
+      margin: [0, 4, 0, 0]
     });
+    header.stack.push(pdfAccentRule(accent, 2.2));
 
     return {
       rtl: true,
       pageSize: "A4",
       pageOrientation: "landscape",
-      pageMargins: [10, 12, 10, 16],
+      pageMargins: [12, 12, 12, 16],
       defaultStyle: { font: "Cairo", fontSize: 9 },
       content: [
         header,
@@ -2241,40 +3117,449 @@
     return parts.join(" | ");
   }
 
-  function pdfHeaderRow(labels, accent) {
+  function pdfTableLayout() {
+    return {
+      defaultBorder: false,
+      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.5,
+      hLineColor: () => "#E5E7EB",
+      vLineWidth: () => 0,
+      paddingLeft: () => 6,
+      paddingRight: () => 6,
+      paddingTop: () => 7,
+      paddingBottom: () => 7,
+      fillColor: rowIndex => (rowIndex % 2 === 1) ? "#F7F8FA" : null
+    };
+  }
+
+  function pdfDangerLayout() {
+    return {
+      defaultBorder: false,
+      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.5,
+      hLineColor: () => "#F5CBCB",
+      vLineWidth: () => 0,
+      paddingLeft: () => 6,
+      paddingRight: () => 6,
+      paddingTop: () => 7,
+      paddingBottom: () => 7,
+      fillColor: rowIndex => (rowIndex % 2 === 1) ? "#FEF2F2" : null
+    };
+  }
+
+  function pdfHeaderRow(labels, accent, fontSize = 8.5) {
     return labels.map(label => ({
       text: label,
       bold: true,
       color: "#ffffff",
       fillColor: accent,
       alignment: "center",
-      margin: [2, 3, 2, 3]
+      fontSize,
+      margin: [4, 5, 4, 5]
+    }));
+  }
+
+  function pdfTableHeaderBar(labels, accent, opts = {}) {
+    const fill = opts.fill === undefined ? accent : opts.fill;
+    const textColor = opts.text === undefined ? accent : (opts.text === null ? accent : opts.text);
+    const font = opts.font || "Cairo";
+    const fontSize = opts.size || 9;
+    const padding = opts.padding || 6;
+    return labels.map(label => ({
+      text: label,
+      bold: true,
+      color: textColor,
+      fillColor: fill,
+      font,
+      alignment: "center",
+      fontSize,
+      margin: [padding, padding, padding, padding]
+    }));
+  }
+
+  function pdfTableLayoutPlain() {
+    return {
+      defaultBorder: false,
+      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.4,
+      hLineColor: () => "#E5E7EB",
+      vLineWidth: () => 0,
+      paddingLeft: () => 8,
+      paddingRight: () => 8,
+      paddingTop: () => 9,
+      paddingBottom: () => 9,
+      fillColor: () => null
+    };
+  }
+
+  function pdfDangerHeaderRow(labels, color) {
+    return labels.map(label => ({
+      text: label,
+      bold: true,
+      color,
+      fillColor: "#FEE2E2",
+      alignment: "center",
+      fontSize: 8.5,
+      margin: [4, 5, 4, 5]
     }));
   }
 
   function pdfSectionTitle(text, accent) {
-    return { text, fontSize: 11, bold: true, color: accent, margin: [0, 8, 0, 3] };
+    return { text, fontSize: 11.5, bold: true, color: accent, margin: [0, 6, 0, 4] };
   }
 
   function pdfSection(title, accent, node) {
     return { unbreakable: true, stack: [pdfSectionTitle(title, accent), node] };
   }
 
-  function pdfKpiTable(items, accent, light) {
+  function pdfAccentRule(color, thickness = 2.4) {
     return {
       layout: "noBorders",
+      table: { headerRows: 0, widths: ["*"], body: [[{ text: "\u00a0", fillColor: color, fontSize: thickness }]] },
+      margin: [0, 7, 0, 2]
+    };
+  }
+
+  const DOC_DESIGN = {
+    primary: "#075E54",
+    secondary: "#0F766E",
+    accent: "#2563EB",
+    text: "#1F2937",
+    textSecondary: "#64748B",
+    background: "#F8FAFC",
+    border: "#E5E7EB",
+    danger: "#B91C1C",
+    success: "#15803D"
+  };
+
+  function docAccent() {
+    return state.settings.docColor || state.settings.accent || DOC_DESIGN.primary;
+  }
+
+  function companyInfoLines() {
+    const lines = [];
+    if (state.settings.companyPhone) lines.push(`هاتف: ${state.settings.companyPhone}`);
+    if (state.settings.companyAddress) lines.push(state.settings.companyAddress);
+    if (state.settings.taxNumber) lines.push(`رقم ضريبي: ${state.settings.taxNumber}`);
+    if (state.settings.commercialNumber) lines.push(`سجل تجاري: ${state.settings.commercialNumber}`);
+    return lines;
+  }
+
+  const ARABIC_NUMBER_WORDS = {
+    ones: ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"],
+    tens: ["", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"],
+    hundreds: ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"]
+  };
+
+  function arabicSmallWords(n) {
+    if (n <= 0) return "";
+    if (n < 10) return ARABIC_NUMBER_WORDS.ones[n];
+    if (n === 10) return "عشرة";
+    if (n === 11) return "أحد عشر";
+    if (n === 12) return "اثنا عشر";
+    if (n < 20) return `${ARABIC_NUMBER_WORDS.ones[n - 10]} عشر`;
+    const tens = Math.floor(n / 10);
+    const rest = n % 10;
+    return rest ? `${ARABIC_NUMBER_WORDS.ones[rest]} و${ARABIC_NUMBER_WORDS.tens[tens]}` : ARABIC_NUMBER_WORDS.tens[tens];
+  }
+
+  function arabicGroupWords(n) {
+    const hundreds = Math.floor(n / 100);
+    const rest = n % 100;
+    const h = hundreds ? ARABIC_NUMBER_WORDS.hundreds[hundreds] : "";
+    const r = arabicSmallWords(rest);
+    if (h && r) return `${h} و${r}`;
+    return h || r;
+  }
+
+  function arabicScaleWords(count, scale) {
+    if (count === 0) return "";
+    if (count === 1) return scale.one;
+    if (count === 2) return scale.dual;
+    if (count === 200) return `مائتا ${scale.general}`;
+    if (count <= 10) return `${arabicGroupWords(count)} ${scale.many}`;
+    return `${arabicGroupWords(count)} ${scale.general}`;
+  }
+
+  function arabicNumberWords(n) {
+    const value = Math.floor(Math.abs(Number(n) || 0));
+    if (value === 0) return "صفر";
+    if (value === 1) return "واحد";
+    if (value === 2) return "اثنان";
+    const billions = Math.floor(value / 1e9);
+    const millions = Math.floor((value % 1e9) / 1e6);
+    const thousands = Math.floor((value % 1e6) / 1e3);
+    const rest = value % 1000;
+    const parts = [];
+    if (billions) parts.push(arabicScaleWords(billions, { one: "مليار", dual: "ملياران", many: "مليارات", general: "مليار" }));
+    if (millions) parts.push(arabicScaleWords(millions, { one: "مليون", dual: "مليونان", many: "ملايين", general: "مليون" }));
+    if (thousands) parts.push(arabicScaleWords(thousands, { one: "ألف", dual: "ألفان", many: "آلاف", general: "ألف" }));
+    if (rest) parts.push(arabicGroupWords(rest));
+    return parts.join(" و");
+  }
+
+  function currencyWordsMapping() {
+    const c = String(state.settings.currency || "").trim();
+    if (c === "ج.م" || c === "جنيه") return { main: "جنيهاً", sub: "قرشاً" };
+    if (c === "ر.س" || c === "ريال") return { main: "ريالاً", sub: "هللة" };
+    if (c === "$" || c === "دولار") return { main: "دولاراً", sub: "سنتاً" };
+    if (c === "€" || c === "يورو") return { main: "يورو", sub: "سنتاً" };
+    return { main: c, sub: "" };
+  }
+
+  function amountInWords(amount) {
+    const value = Math.abs(Number(amount || 0));
+    const integer = Math.floor(value);
+    const frac = Math.round((value - integer) * 100) % 100;
+    const mapping = currencyWordsMapping();
+    let out = "فقط ";
+    if (integer > 0) out += `${arabicNumberWords(integer)} ${mapping.main}`;
+    if (frac > 0) out += `${integer > 0 ? " و" : ""}${arabicNumberWords(frac)} ${mapping.sub || mapping.main}`;
+    return `${out} لا غير`;
+  }
+
+  function loadQrLibrary() {
+    return loadScriptList([
+      "assets/vendor/qrcode.min.js",
+      "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"
+    ]).then(() => {
+      if (!window.qrcode) throw new Error("فشل تحميل مكتبة QR");
+    });
+  }
+
+  async function qrDataUrl(text, size = 220) {
+    await loadQrLibrary();
+    const qr = window.qrcode(0, "M");
+    qr.addData(text);
+    qr.make();
+    const count = qr.getModuleCount();
+    const scale = Math.max(1, Math.floor(size / (count + 8)));
+    const pad = 4 * scale;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = pad * 2 + count * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#111827";
+    for (let r = 0; r < count; r += 1) {
+      for (let c = 0; c < count; c += 1) {
+        if (qr.isDark(r, c)) ctx.fillRect(pad + c * scale, pad + r * scale, scale, scale);
+      }
+    }
+    return canvas.toDataURL("image/png");
+  }
+
+  function invoiceQrText(sale) {
+    const lines = [state.settings.storeName, `فاتورة: ${sale.number}`, `التاريخ: ${dateTime(sale.date)}`, `الإجمالي: ${moneyFormatter.format(netSale(sale).total)} ${state.settings.currency || ""}`];
+    if (state.settings.taxNumber) lines.push(`رقم ضريبي: ${state.settings.taxNumber}`);
+    if (state.settings.commercialNumber) lines.push(`سجل تجاري: ${state.settings.commercialNumber}`);
+    return lines.join("\n");
+  }
+
+  function pdfMoneyParts(value, opts = {}) {
+    const size = opts.size || 9.5;
+    return [
+      { text: moneyFormatter.format(Number(value || 0)), bold: opts.bold !== false, color: opts.color || "#111827", fontSize: size },
+      { text: ` ${state.settings.currency || ""}`, bold: false, color: opts.currencyColor || "#6b7280", fontSize: Math.max(6, size - 2) }
+    ];
+  }
+
+  function pdfKpiChipDataUrl(label, color) {
+    const size = 34;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `bold ${Math.floor(size * 0.52)}px Cairo, Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText((String(label || "؟").trim().charAt(0) || "؟"), size / 2, size / 2 + size * 0.04);
+    return canvas.toDataURL("image/png");
+  }
+
+  function pdfKpiCards(items, accent, light) {
+    const cards = items.map(item => ({
+      width: "*",
       table: {
-        widths: Array(items.length).fill("*"),
-        body: [[...items.map(item => ({
-          stack: [
-            { text: item.label, fontSize: 8, color: "#6b7280", alignment: "center" },
-            { text: item.value, fontSize: 13, bold: true, color: accent, alignment: "center", margin: [0, 2, 0, 0] }
-          ],
-          fillColor: light,
-          margin: [4, 4, 4, 4]
-        }))]]
+        widths: ["*"],
+        body: [[
+          {
+            stack: [
+              {
+                columns: [
+                  { image: pdfKpiChipDataUrl(item.label, accent), width: 20, height: 20, alignment: "center", margin: [0, 0, 6, 0] },
+                  {
+                    stack: [
+                      { text: item.label, fontSize: 7.5, color: "#6b7280" },
+                      { text: item.value, fontSize: 11.5, bold: true, color: "#111827", margin: [0, 3, 0, 0] }
+                    ],
+                    margin: [0, 1, 0, 0]
+                  }
+                ],
+                columnGap: 2
+              },
+              { text: item.note || "", fontSize: 7, color: "#9ca3af", margin: [0, 4, 0, 0] }
+            ],
+            fillColor: light,
+            margin: [8, 10, 8, 10]
+          }
+        ]]
       },
-      margin: [0, 0, 0, 4]
+      layout: "noBorders"
+    }));
+    return { columns: cards, columnGap: 6, margin: [0, 2, 0, 8] };
+  }
+
+  function pdfSectionGrid(cards, accent, light) {
+    const rows = [];
+    for (let i = 0; i < cards.length; i += 2) {
+      const pair = cards.slice(i, i + 2);
+      const cols = pair.map(card => ({
+        width: "*",
+        table: {
+          widths: ["*"],
+          body: [[
+            {
+              stack: [
+                { text: card.title, fontSize: 10.5, bold: true, color: accent, margin: [0, 0, 0, 7] },
+                card.node
+              ],
+              fillColor: light,
+              margin: [11, 12, 11, 12]
+            }
+          ]]
+        },
+        layout: "noBorders"
+      }));
+      rows.push({ unbreakable: true, columns: cols, columnGap: 8, margin: [0, 0, 0, 8] });
+    }
+    return rows;
+  }
+
+  function pdfPalette(accent, count) {
+    const base = ["#2f9e86", "#e0a03a", "#c25b5b", "#6b7fd7", "#b084cc", "#7a9e6a", "#c97b4a", "#5b8bb0"];
+    return [accent, ...base].slice(0, Math.max(1, count));
+  }
+
+  function buildDonutSegments(items, accent) {
+    const total = items.reduce((sum, item) => sum + Number(item.value || 0), 0);
+    const colors = pdfPalette(accent, items.length);
+    return items.map((item, index) => ({
+      label: String(item.label || "").slice(0, 18),
+      value: Number(item.value || 0),
+      valueText: item.display && typeof item.display === "string" ? item.display : formatMoney(item.value),
+      pct: total > 0 ? Math.round((item.value / total) * 100) : 0,
+      color: colors[index] || accent
+    }));
+  }
+
+  function pdfDonutDataUrl(segments) {
+    const size = 210;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const cx = size / 2, cy = size / 2;
+    const radius = size / 2 - 8;
+    const inner = radius * 0.62;
+    let start = -Math.PI / 2;
+    const total = segments.reduce((sum, segment) => sum + segment.value, 0);
+    segments.forEach(segment => {
+      const angle = total > 0 ? (segment.value / total) * Math.PI * 2 : 0;
+      ctx.beginPath();
+      ctx.moveTo(cx + inner * Math.cos(start), cy + inner * Math.sin(start));
+      ctx.arc(cx, cy, radius, start, start + angle);
+      ctx.arc(cx, cy, inner, start + angle, start, true);
+      ctx.closePath();
+      ctx.fillStyle = segment.color;
+      ctx.fill();
+      start += angle;
+    });
+    ctx.fillStyle = "#9ca3af";
+    ctx.font = "bold 12px Cairo, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("الإجمالي", cx, cy - 9);
+    ctx.fillStyle = "#111827";
+    ctx.font = "bold 16px Cairo, Arial, sans-serif";
+    ctx.fillText(moneyFormatter.format(total), cx, cy + 12);
+    return canvas.toDataURL("image/png");
+  }
+
+  function pdfDonutBlock(items, accent) {
+    const segments = buildDonutSegments(items, accent);
+    const legend = {
+      layout: { ...pdfTableLayout(), fillColor: () => null, paddingTop: () => 3, paddingBottom: () => 3, paddingLeft: () => 4, paddingRight: () => 4 },
+      table: {
+        headerRows: 0,
+        widths: [12, "*", 64, 40],
+        body: segments.map(segment => [
+          { text: "\u00a0", fontSize: 5, fillColor: segment.color },
+          { text: segment.label, fontSize: 8.5, color: "#374151" },
+          { text: segment.valueText, fontSize: 8.5, bold: true, alignment: "center" },
+          { text: `${segment.pct}%`, fontSize: 8.5, color: "#6b7280", alignment: "center" }
+        ])
+      }
+    };
+    return {
+      columns: [
+        { width: 124, image: pdfDonutDataUrl(segments), alignment: "center", margin: [0, 4, 0, 0] },
+        { width: "*", stack: [legend], alignment: "right" }
+      ],
+      columnGap: 8
+    };
+  }
+
+  function pdfProgressBar(pct, color) {
+    const value = Number(pct) || 0;
+    const fill = value > 0 ? Math.max(6, Math.min(100, value)) : 1;
+    const rest = Math.max(0, 100 - fill);
+    return {
+      layout: {
+        defaultBorder: false,
+        hLineWidth: () => 0,
+        vLineWidth: () => 0,
+        paddingLeft: () => 0,
+        paddingRight: () => 0,
+        paddingTop: () => 0,
+        paddingBottom: () => 0,
+        fillColor: () => null
+      },
+      table: {
+        headerRows: 0,
+        widths: [fill, rest],
+        body: [[
+          { text: "\u00a0", fontSize: 5, fillColor: color },
+          { text: "\u00a0", fontSize: 5, fillColor: "#EDEFF2" }
+        ]]
+      }
+    };
+  }
+
+  function pdfProgressRows(rows, accent, opts = {}) {
+    const max = opts.relative === false ? 100 : Math.max(...rows.map(row => Number(row.pct) || 0), 1);
+    return pdfTable([
+      pdfHeaderRow(["الفئة", "النسبة", "القيمة"], accent),
+      ...rows.map(row => {
+        const pct = max > 0 ? Math.min(100, ((Number(row.pct) || 0) / max) * 100) : 0;
+        return [
+          { text: row.label, fontSize: 8.5, bold: true },
+          { stack: [pdfProgressBar(pct, accent)], verticalAlignment: "middle" },
+          { text: row.display || `${row.pct}%`, alignment: "center", bold: true, fontSize: 8.5 }
+        ];
+      })
+    ], ["*", "*", 55], { headerRows: 1 });
+  }
+
+  function pdfAlertBlock(title, node) {
+    return {
+      unbreakable: true,
+      stack: [
+        { text: title, fontSize: 10.5, bold: true, color: "#B91C1C", margin: [0, 2, 0, 6] },
+        node
+      ]
     };
   }
 
@@ -2289,52 +3574,52 @@
     const marginPct = stats.allSales > 0 ? `${Math.round((stats.allProfit / stats.allSales) * 100)}%` : "0%";
     const content = [];
 
-    content.push(pdfKpiTable([
+    content.push(pdfKpiCards([
       { label: "إجمالي المبيعات", value: formatMoney(stats.allSales) },
       { label: "صافي الربح", value: formatMoney(stats.allProfit) },
       { label: "هامش الربح", value: marginPct },
       { label: "عدد الفواتير", value: `${extra.salesCount}` },
-      { label: "متوسط قيمة الفاتورة", value: formatMoney(extra.salesCount ? stats.allSales / extra.salesCount : 0) },
-      { label: "القطع المباعة", value: `${stats.soldQty}` }
+      { label: "متوسط الفاتورة", value: formatMoney(extra.salesCount ? stats.allSales / extra.salesCount : 0) },
+      { label: "القطع المباعة", value: `${stats.soldQty} قطعة` }
     ], accent, light));
 
-    content.push(pdfSectionTitle("ملخص الخصومات والشحن والضرائب", accent));
-    content.push(pdfKpiTable([
+    content.push(pdfKpiCards([
       { label: "إجمالي الخصومات", value: formatMoney(extra.totalDiscount) },
       { label: "إيراد الشحن", value: formatMoney(extra.totalShipping) },
       { label: "إجمالي الضريبة", value: formatMoney(extra.totalTax) },
       { label: "عدد الفواتير", value: `${extra.salesCount}` }
     ], accent, light));
 
+    const gridCards = [];
+    if (categories.length) gridCards.push({ title: "مبيعات الفئات", node: pdfDonutBlock(categories, accent) });
+    if (payments.length) gridCards.push({ title: "تحليل طرق الدفع", node: pdfDonutBlock(payments, accent) });
     if (margins.length) {
-      content.push(pdfSection("هوامش الربح حسب الفئة", accent, pdfTable([
-        pdfHeaderRow(["الفئة", "الهامش"], accent),
-        ...margins.map(m => [{ text: m.label }, { text: m.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
-    }
-    if (categories.length) {
-      content.push(pdfSection("مبيعات الفئات", accent, pdfTable([
-        pdfHeaderRow(["الفئة", "الإيراد"], accent),
-        ...categories.map(c => [{ text: c.label }, { text: c.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      gridCards.push({
+        title: "هوامش الربح حسب الفئة",
+        node: pdfProgressRows(margins.map(m => ({ label: m.label, pct: m.value, display: m.display })), accent, { relative: false })
+      });
     }
     if (top.length) {
-      content.push(pdfSection("الأكثر مبيعاً", accent, pdfTable([
-        pdfHeaderRow(["الصنف", "الكمية"], accent),
-        ...top.map(t => [{ text: t.label }, { text: t.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      gridCards.push({
+        title: "الأكثر مبيعاً",
+        node: pdfTable([
+          pdfHeaderRow(["الصنف", "الكمية"], accent),
+          ...top.map(t => [{ text: t.label, fontSize: 8.5, bold: true }, { text: t.display, alignment: "center", bold: true, fontSize: 8.5 }])
+        ], ["*", "*"], { headerRows: 1 })
+      });
     }
-    if (payments.length) {
-      content.push(pdfSection("تحليل طرق الدفع", accent, pdfTable([
-        pdfHeaderRow(["طريقة الدفع", "الإيراد", "عدد الفواتير"], accent),
-        ...payments.map(p => [{ text: p.method }, { text: formatMoney(p.total), alignment: "center" }, { text: `${p.count}`, alignment: "center" }])
-      ], ["*", "*", "*"])));
-    }
+    content.push(...pdfSectionGrid(gridCards, accent, light));
+
     if (low.length) {
-      content.push(pdfSection("أصناف منخفضة المخزون", accent, pdfTable([
-        pdfHeaderRow(["الصنف", "SKU", "المتبقي", "حد التنبيه"], accent),
-        ...low.map(p => [{ text: p.name }, { text: p.sku }, { text: `${p.quantity}`, alignment: "center" }, { text: `${p.lowStock}`, alignment: "center" }])
-      ], ["*", "*", "*", "*"])));
+      content.push(pdfAlertBlock("أصناف منخفضة المخزون", pdfTable([
+        pdfDangerHeaderRow(["الصنف", "SKU", "المتبقي", "حد التنبيه"], "#B91C1C"),
+        ...low.map(p => [
+          { text: p.name, fontSize: 8.5, bold: true },
+          { text: p.sku, fontSize: 8.5 },
+          { text: `${p.quantity}`, alignment: "center", fontSize: 8.5, bold: true, color: "#B91C1C" },
+          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 }
+        ])
+      ], ["*", "*", 50, 50], { layout: pdfDangerLayout(), headerRows: 1 })));
     }
 
     return content;
@@ -2344,10 +3629,8 @@
     const rows = getHourlySales();
     const content = [];
     if (rows.length) {
-      content.push(pdfSection("ساعات الذروة والأكثر مبيعاً", accent, pdfTable([
-        pdfHeaderRow(["الساعة", "قيمة المبيعات"], accent),
-        ...rows.map(h => [{ text: h.label }, { text: h.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      content.push(pdfSectionTitle("ساعات الذروة", accent));
+      content.push(pdfProgressRows(rows.map(h => ({ label: h.label, pct: h.value, display: h.display })), accent));
     } else {
       content.push({ text: "لا توجد بيانات ساعات بيع في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2358,17 +3641,18 @@
     const rows = getProductProfitability();
     const content = [];
     if (rows.length) {
-      content.push(pdfSection("تحليل ربحية الأصناف المباعة", accent, pdfTable([
+      content.push(pdfSectionTitle("تحليل ربحية الأصناف المباعة", accent));
+      content.push(pdfTable([
         pdfHeaderRow(["الصنف", "القطع", "الإيراد", "التكلفة", "صافي الربح", "الهامش"], accent),
         ...rows.map(p => [
-          { text: p.name, bold: true },
-          { text: `${p.qty}`, alignment: "center" },
-          { text: formatMoney(p.revenue), alignment: "center" },
-          { text: formatMoney(p.cost), alignment: "center" },
-          { text: formatMoney(p.profit), alignment: "center", bold: true },
-          { text: `${p.margin}%`, alignment: "center" }
+          { text: p.name, bold: true, fontSize: 8.5 },
+          { text: `${p.qty}`, alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.revenue), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.profit), alignment: "center", bold: true, fontSize: 8.5 },
+          { text: `${p.margin}%`, alignment: "center", fontSize: 8.5 }
         ])
-      ], ["*", "*", "*", "*", "*", "*"])));
+      ], ["*", "*", "*", "*", "*", "*"]));
     } else {
       content.push({ text: "لا توجد مبيعات أصناف في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2379,14 +3663,15 @@
     const rows = getTopCustomers();
     const content = [];
     if (rows.length) {
-      content.push(pdfSection("العملاء الأكثر شراءً", accent, pdfTable([
+      content.push(pdfSectionTitle("العملاء الأكثر شراءً", accent));
+      content.push(pdfTable([
         pdfHeaderRow(["اسم العميل", "عدد الفواتير", "إجمالي المشتريات"], accent),
         ...rows.map(c => [
-          { text: c.name, bold: true },
-          { text: `${c.count}`, alignment: "center" },
-          { text: formatMoney(c.total), alignment: "center", bold: true }
+          { text: c.name, bold: true, fontSize: 8.5 },
+          { text: `${c.count}`, alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(c.total), alignment: "center", bold: true, fontSize: 8.5 }
         ])
-      ], ["*", "*", "*"])));
+      ], ["*", "*", "*"]));
     } else {
       content.push({ text: "لا توجد مبيعات عملاء مسجلة في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2404,7 +3689,7 @@
     const lowCount = products.filter(p => p.quantity <= p.lowStock).length;
     const content = [];
     content.push(pdfSectionTitle("تقرير المخزون التفصيلي", accent));
-    content.push(pdfKpiTable([
+    content.push(pdfKpiCards([
       { label: "عدد الأصناف", value: `${products.length}` },
       { label: "إجمالي القطع", value: `${totalQty}` },
       { label: "قيمة البيع", value: formatMoney(retailValue) },
@@ -2413,23 +3698,23 @@
       { label: "أصناف منخفضة", value: `${lowCount}` }
     ], accent, light));
     if (products.length) {
-      const thumbs = await Promise.all(products.map(p => resolveThumbForPdf(p.image, 48, p.name)));
+      const thumbs = await Promise.all(products.map(p => resolveThumbForPdf(p.image, 44, p.name, "circle")));
       content.push(pdfTable([
         pdfHeaderRow(["الصورة", "الصنف", "SKU", "الفئة", "الكمية", "سعر البيع", "التكلفة", "قيمة المخزون", "الحالة"], accent),
         ...products.map((p, index) => [
           thumbs[index]
-            ? { image: thumbs[index], width: 26, height: 26, alignment: "center", margin: [1, 1, 1, 1] }
+            ? { image: thumbs[index], width: 24, height: 24, alignment: "center", margin: [1, 1, 1, 1] }
             : { text: "", margin: [2, 3, 2, 3] },
-          { text: p.name, bold: true },
-          { text: p.sku },
-          { text: p.category },
-          { text: `${p.quantity}`, alignment: "center" },
-          { text: formatMoney(p.price), alignment: "center" },
-          { text: formatMoney(p.cost), alignment: "center" },
-          { text: formatMoney(p.price * p.quantity), alignment: "center", bold: true },
-          { text: p.quantity <= p.lowStock ? "منخفض" : "متاح", alignment: "center", bold: true, color: p.quantity <= p.lowStock ? "#dc2626" : "#15803d" }
+          { text: p.name, bold: true, fontSize: 8.5 },
+          { text: p.sku, fontSize: 8.5 },
+          { text: p.category, fontSize: 8.5 },
+          { text: `${p.quantity}`, alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.price), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.price * p.quantity), alignment: "center", bold: true, fontSize: 8.5 },
+          { text: p.quantity <= p.lowStock ? "منخفض" : "متاح", alignment: "center", bold: true, fontSize: 8.5, color: p.quantity <= p.lowStock ? "#dc2626" : "#15803d" }
         ])
-      ], [32, "*", 55, 55, 40, 55, 50, 65, 45]));
+      ], [30, "*", 52, 52, 38, 54, 50, 62, 44]));
     } else {
       content.push({ text: "لا توجد أصناف مطابقة للفلاتر المحددة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2442,17 +3727,18 @@
     const marginPct = stats.allSales > 0 ? `${Math.round((stats.allProfit / stats.allSales) * 100)}%` : "0%";
     const content = [];
     content.push(pdfSectionTitle("تحليل الأرباح الهامشية", accent));
-    content.push(pdfKpiTable([
+    content.push(pdfKpiCards([
       { label: "إجمالي الإيرادات", value: formatMoney(stats.allSales) },
       { label: "صافي الربح", value: formatMoney(stats.allProfit) },
       { label: "هامش الربح", value: marginPct },
       { label: "القطع المباعة", value: `${stats.soldQty}` }
     ], accent, light));
     if (margins.length) {
-      content.push(pdfSection("هوامش الربح حسب الفئة", accent, pdfTable([
-        pdfHeaderRow(["الفئة", "الهامش"], accent),
-        ...margins.map(m => [{ text: m.label }, { text: m.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      content.push(pdfSection("هوامش الربح حسب الفئة", accent, pdfProgressRows(
+        margins.map(m => ({ label: m.label, pct: m.value, display: m.display })),
+        accent,
+        { relative: false }
+      )));
     } else {
       content.push({ text: "لا توجد مبيعات في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2463,10 +3749,8 @@
     const categories = totalsByCategory();
     const content = [];
     if (categories.length) {
-      content.push(pdfSection("مبيعات الفئات", accent, pdfTable([
-        pdfHeaderRow(["الفئة", "الإيراد"], accent),
-        ...categories.map(c => [{ text: c.label }, { text: c.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      content.push(pdfSectionTitle("مبيعات الفئات", accent));
+      content.push(pdfDonutBlock(categories, accent));
     } else {
       content.push({ text: "لا توجد مبيعات فئات في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2477,10 +3761,15 @@
     const top = topProductsByQty();
     const content = [];
     if (top.length) {
-      content.push(pdfSection("الأكثر مبيعاً", accent, pdfTable([
-        pdfHeaderRow(["الصنف", "الكمية"], accent),
-        ...top.map(t => [{ text: t.label }, { text: t.display, alignment: "center", bold: true }])
-      ], ["*", "*"])));
+      content.push(pdfSectionTitle("الأكثر مبيعاً", accent));
+      content.push(pdfTable([
+        pdfHeaderRow(["الترتيب", "الصنف", "الكمية"], accent),
+        ...top.map((t, i) => [
+          { text: `${i + 1}`, alignment: "center", bold: true, fontSize: 8.5, color: i < 3 ? accent : "#6b7280" },
+          { text: t.label, bold: true, fontSize: 8.5 },
+          { text: t.display, alignment: "center", bold: true, fontSize: 8.5 }
+        ])
+      ], [40, "*", 60]));
     } else {
       content.push({ text: "لا توجد مبيعات كافية للرسم بعد.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2491,10 +3780,8 @@
     const payments = getPaymentStats();
     const content = [];
     if (payments.length) {
-      content.push(pdfSection("تحليل طرق الدفع", accent, pdfTable([
-        pdfHeaderRow(["طريقة الدفع", "الإيراد", "عدد الفواتير"], accent),
-        ...payments.map(p => [{ text: p.method }, { text: formatMoney(p.total), alignment: "center" }, { text: `${p.count}`, alignment: "center" }])
-      ], ["*", "*", "*"])));
+      content.push(pdfSectionTitle("تحليل طرق الدفع", accent));
+      content.push(pdfDonutBlock(payments, accent));
     } else {
       content.push({ text: "لا توجد بيانات دفع بعد.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -2505,27 +3792,35 @@
     const low = filteredReportProducts().filter(p => p.quantity <= p.lowStock);
     const content = [];
     if (low.length) {
-      const thumbs = await Promise.all(low.map(p => resolveThumbForPdf(p.image, 48, p.name)));
-      content.push(pdfSection("أصناف منخفضة المخزون", accent, pdfTable([
-        pdfHeaderRow(["الصورة", "الصنف", "SKU", "المتبقي", "حد التنبيه"], accent),
+      const thumbs = await Promise.all(low.map(p => resolveThumbForPdf(p.image, 44, p.name, "circle")));
+      content.push(pdfAlertBlock("أصناف منخفضة المخزون", pdfTable([
+        pdfDangerHeaderRow(["الصورة", "الصنف", "SKU", "المتبقي", "حد التنبيه"], "#B91C1C"),
         ...low.map((p, index) => [
           thumbs[index]
-            ? { image: thumbs[index], width: 26, height: 26, alignment: "center", margin: [1, 1, 1, 1] }
+            ? { image: thumbs[index], width: 24, height: 24, alignment: "center", margin: [1, 1, 1, 1] }
             : { text: "", margin: [2, 3, 2, 3] },
-          { text: p.name, bold: true },
-          { text: p.sku },
-          { text: `${p.quantity}`, alignment: "center", bold: true, color: "#dc2626" },
-          { text: `${p.lowStock}`, alignment: "center" }
+          { text: p.name, bold: true, fontSize: 8.5 },
+          { text: p.sku, fontSize: 8.5 },
+          { text: `${p.quantity}`, alignment: "center", bold: true, fontSize: 8.5, color: "#B91C1C" },
+          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 }
         ])
-      ], [32, "*", 55, 40, 40])));
+      ], [30, "*", 52, 40, 40], { layout: pdfDangerLayout(), headerRows: 1 })));
     } else {
       content.push({ text: "لا توجد تنبيهات مخزون مطابقة للفلاتر المحددة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
     return content;
   }
 
-  function pdfTable(body, widths) {
-    return { layout: "lightHorizontalLines", table: { headerRows: 1, widths, body } };
+  function pdfTable(body, widths, opts = {}) {
+    return {
+      layout: opts.layout || pdfTableLayout(),
+      table: {
+        headerRows: opts.headerRows !== undefined ? opts.headerRows : 1,
+        widths,
+        body
+      },
+      ...(opts.margin ? { margin: opts.margin } : {})
+    };
   }
 
   function shadeHex(hex, percent) {
@@ -2539,6 +3834,7 @@
   }
 
   function invoiceText(sale) {
+    const net = netSale(sale);
     const lines = [
       state.settings.storeName,
       sale.number,
@@ -2546,7 +3842,13 @@
       `العميل: ${sale.customerName}`,
       ...sale.items.map(item => `${item.name} x${item.qty} = ${formatMoney(item.total)}`),
       sale.shipping ? `مصاريف الشحن: ${formatMoney(sale.shipping)}` : null,
-      `الإجمالي: ${formatMoney(sale.total)}`
+      ...((sale.returns || []).length ? [
+        `المرتجعات: ${net.qty > 0 ? "جزئية" : "كاملة"}`,
+        ...sale.returns.flatMap(ret => ret.items.map(item => `مرتجع: ${item.name} x${item.qty} = ${formatMoney(item.total)}`))
+      ] : []),
+      `الإجمالي: ${formatMoney(net.total)}`,
+      amountInWords(net.total),
+      ...companyInfoLines()
     ].filter(Boolean);
     return lines.join("\n");
   }
@@ -2558,8 +3860,14 @@
       currency: document.getElementById("currency").value.trim() || "ر.س",
       taxRate: Number(document.getElementById("taxRate").value || 0),
       invoiceFooter: document.getElementById("invoiceFooter").value.trim(),
+      invoiceTemplate: document.querySelector("input[name='invoiceTemplate']:checked")?.value || state.settings.invoiceTemplate,
       accent: document.getElementById("accentColor").value,
+      docColor: document.getElementById("docColor")?.value || state.settings.docColor,
       logo: state.settings.logo || "",
+      companyPhone: document.getElementById("companyPhone")?.value.trim() || "",
+      companyAddress: document.getElementById("companyAddress")?.value.trim() || "",
+      taxNumber: document.getElementById("taxNumber")?.value.trim() || "",
+      commercialNumber: document.getElementById("commercialNumber")?.value.trim() || "",
       allowTaxFree: !!document.getElementById("allowTaxFree")?.checked
     };
     saveAll();
@@ -2771,9 +4079,10 @@
     const todaySales = state.sales.filter(sale => new Date(sale.date).toDateString() === todayKey);
     const filteredSales = getFilteredSales();
     const summarize = sales => sales.reduce((acc, sale) => {
-      acc.sales += sale.total;
-      acc.profit += sale.items.reduce((sum, item) => sum + ((item.price - item.cost) * item.qty), 0) - sale.discount;
-      acc.qty += sale.items.reduce((sum, item) => sum + item.qty, 0);
+      const net = netSale(sale);
+      acc.sales += net.total;
+      acc.profit += net.profit;
+      acc.qty += net.qty;
       return acc;
     }, { sales: 0, profit: 0, qty: 0 });
     const today = summarize(todaySales);
@@ -2805,7 +4114,7 @@
     sales.forEach(s => {
       const m = s.paymentMethod || "نقدا";
       if (!methods[m]) methods[m] = { method: m, total: 0, count: 0 };
-      methods[m].total += s.total;
+      methods[m].total += netSale(s).total;
       methods[m].count += 1;
     });
     return Object.values(methods).sort((a, b) => b.total - a.total);
@@ -2819,6 +4128,12 @@
         if (!cats[item.category]) cats[item.category] = { revenue: 0, cost: 0 };
         cats[item.category].revenue += item.price * item.qty;
         cats[item.category].cost += item.cost * item.qty;
+      });
+      saleReturnItems(s).forEach(item => {
+        const label = item.category || "غير مصنف";
+        if (!cats[label]) cats[label] = { revenue: 0, cost: 0 };
+        cats[label].revenue -= item.price * item.qty;
+        cats[label].cost -= (item.cost || 0) * item.qty;
       });
     });
     return Object.entries(cats).map(([label, data]) => ({
@@ -2845,7 +4160,7 @@
     sales.forEach(s => {
       const name = s.customerName?.trim() || "عميل نقدي";
       if (!custMap[name]) custMap[name] = { name, total: 0, count: 0 };
-      custMap[name].total += s.total;
+      custMap[name].total += netSale(s).total;
       custMap[name].count += 1;
     });
     return Object.values(custMap).sort((a, b) => b.total - a.total).slice(0, 8);
@@ -2856,7 +4171,7 @@
     const hoursMap = {};
     sales.forEach(s => {
       const hour = new Date(s.date).getHours();
-      hoursMap[hour] = (hoursMap[hour] || 0) + s.total;
+      hoursMap[hour] = (hoursMap[hour] || 0) + netSale(s).total;
     });
     return Object.entries(hoursMap)
       .map(([h, val]) => {
@@ -2885,12 +4200,20 @@
         prodMap[item.name].revenue += item.price * item.qty;
         prodMap[item.name].cost += (item.cost || 0) * item.qty;
       });
+      saleReturnItems(s).forEach(item => {
+        if (!prodMap[item.name]) {
+          prodMap[item.name] = { name: item.name, qty: 0, revenue: 0, cost: 0 };
+        }
+        prodMap[item.name].qty -= item.qty;
+        prodMap[item.name].revenue -= item.price * item.qty;
+        prodMap[item.name].cost -= (item.cost || 0) * item.qty;
+      });
     });
     return Object.values(prodMap).map(p => {
       const profit = p.revenue - p.cost;
       const margin = p.revenue > 0 ? Math.round((profit / p.revenue) * 100) : 0;
       return { ...p, profit, margin };
-    }).sort((a, b) => b.profit - a.profit);
+    }).filter(p => p.qty > 0).sort((a, b) => b.profit - a.profit);
   }
 
   function topProductsByQty() {
@@ -2900,9 +4223,13 @@
       sale.items.forEach(item => {
         totals[item.name] = (totals[item.name] || 0) + item.qty;
       });
+      saleReturnItems(sale).forEach(item => {
+        totals[item.name] = (totals[item.name] || 0) - item.qty;
+      });
     });
     return Object.entries(totals)
       .map(([label, value]) => ({ label, value, display: `${value} قطعة` }))
+      .filter(entry => entry.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
   }
@@ -2915,9 +4242,14 @@
         const label = item.category || "غير مصنف";
         totals[label] = (totals[label] || 0) + (item.price * item.qty);
       });
+      saleReturnItems(sale).forEach(item => {
+        const label = item.category || "غير مصنف";
+        totals[label] = (totals[label] || 0) - (item.price * item.qty);
+      });
     });
     return Object.entries(totals)
       .map(([label, value]) => ({ label, value, display: formatMoney(value) }))
+      .filter(entry => entry.value > 0)
       .sort((a, b) => b.value - a.value);
   }
 
