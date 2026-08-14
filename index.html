@@ -66,6 +66,7 @@
           <input id="productImage" type="file" accept="image/*">
           <img id="imagePreview" alt="معاينة صورة الصنف">
           <span>رفع صورة الصنف</span>
+          <button class="image-zoom-btn" id="imagePreviewZoomBtn" type="button" title="معاينة كبيرة للصورة">🔍 معاينة</button>
         </label>
 
         <div class="fields">
@@ -150,10 +151,41 @@
         </div>
         <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
       </header>
-      <p class="muted" id="confirmDialogMessage" style="line-height:1.7"></p>
+      <p class="muted" id="confirmDialogMessage" style="line-height:1.7;white-space:pre-line"></p>
       <footer class="dialog-actions">
         <button class="ghost" id="confirmDialogCancel" type="button">إلغاء</button>
         <button class="danger" id="confirmDialogOk" type="button">تأكيد</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="dialog image-zoom-dialog" id="imagePreviewDialog" aria-labelledby="imageZoomTitle">
+    <div class="image-zoom-shell">
+      <header class="image-zoom-head">
+        <div>
+          <p class="eyebrow">معاينة الصنف</p>
+          <h2 id="imageZoomTitle">معاينة الصورة</h2>
+        </div>
+        <button class="icon-btn" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <div class="image-zoom-stage" id="imageZoomStage">
+        <img id="imageZoomImg" alt="صورة الصنف">
+      </div>
+      <footer class="image-zoom-foot">
+        <div class="image-zoom-meta">
+          <strong id="imageZoomName"></strong>
+          <p class="muted" id="imageZoomDetails"></p>
+        </div>
+        <div class="image-zoom-chips">
+          <strong class="image-zoom-price" id="imageZoomPrice"></strong>
+          <span class="status-pill ok" id="imageZoomStock"></span>
+        </div>
+        <div class="image-zoom-controls">
+          <button class="icon-btn" id="imageZoomOut" type="button" aria-label="تصغير">−</button>
+          <span class="image-zoom-level" id="imageZoomLevel">ملاءمة</span>
+          <button class="icon-btn" id="imageZoomIn" type="button" aria-label="تكبير">+</button>
+          <button class="ghost" id="imageZoomFit" type="button">ملاءمة الشاشة</button>
+        </div>
       </footer>
     </div>
   </dialog>

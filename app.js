@@ -8,6 +8,10 @@
     theme: "clothing-pos.theme.v1",
     session: "clothing-pos.session.v1"
   };
+  const PRODUCT_PAGE_SIZE = 48;
+  const SALE_PAGE_SIZE = 70;
+  const PRODUCT_IMAGE_MAX_SIZE = 720;
+  const PRODUCT_IMAGE_QUALITY = 0.72;
 
   const navItems = [
     { id: "dashboard", title: "الرئيسية", icon: "ر" },
@@ -52,12 +56,17 @@
     _custView: "cards",
     _custSort: "total",
     _custOpen: "",
+    _productView: "grid",
+    _saleView: "list",
+    _invoiceView: "list",
     _saleCustomerName: "",
     _saleCustomerPhone: "",
     _saleDiscount: 0,
     _saleShipping: 0,
     _salePayment: "نقدا",
     _saleTaxFree: false,
+    _productDisplayLimit: PRODUCT_PAGE_SIZE,
+    _saleDisplayLimit: SALE_PAGE_SIZE,
     _returnSel: {},
     allowExit: false
   };
@@ -87,6 +96,7 @@
   const returnItemsList = document.getElementById("returnItemsList");
   const confirmDialog = document.getElementById("confirmDialog");
   const toast = document.getElementById("toast");
+  const imagePreviewDialog = document.getElementById("imagePreviewDialog");
 
   const moneyFormatter = new Intl.NumberFormat("ar-EG-u-nu-latn", {
     minimumFractionDigits: 2,
@@ -136,7 +146,8 @@
       companyAddress: "",
       taxNumber: "",
       commercialNumber: "",
-      allowTaxFree: false
+      allowTaxFree: false,
+      showInvoiceQr: true
     };
   }
 
@@ -209,10 +220,145 @@
     }
   }
 
+  function storageUsedBytes() {
+    let bytes = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const value = localStorage.getItem(key);
+        bytes += (key.length + (value ? value.length : 0)) * 2;
+      }
+    } catch (error) {
+      /* ignore */
+    }
+    return bytes;
+  }
+
+  let storageQuotaCache = null;
+  function storageQuotaBytes() {
+    if (storageQuotaCache !== null) return storageQuotaCache;
+    const probeKey = "__clothing_pos_quota_probe__";
+    const usedBefore = storageUsedBytes();
+    let total = Math.max(5 * 1024 * 1024, usedBefore + 256 * 1024);
+    try {
+      let size = 128 * 1024;
+      let last = 0;
+      while (size <= 64 * 1024 * 1024) {
+        localStorage.setItem(probeKey, "x".repeat(size));
+        last = size;
+        size *= 2;
+      }
+      if (last > 0) total = usedBefore + last;
+    } catch (error) {
+      /* keep fallback estimate */
+    } finally {
+      try { localStorage.removeItem(probeKey); } catch (error) { /* ignore */ }
+    }
+    storageQuotaCache = total;
+    return storageQuotaCache;
+  }
+
+  function storagePercent() {
+    const total = storageQuotaBytes();
+    const used = storageUsedBytes();
+    return total > 0 ? Math.round((used / total) * 100) : 0;
+  }
+
+  function commitState(next) {
+    const candidates = {
+      products: next.products !== undefined ? next.products : state.products,
+      sales: next.sales !== undefined ? next.sales : state.sales,
+      settings: next.settings !== undefined ? next.settings : state.settings
+    };
+    const serialized = {
+      products: JSON.stringify(candidates.products),
+      sales: JSON.stringify(candidates.sales),
+      settings: JSON.stringify(candidates.settings)
+    };
+    const payloadChars = serialized.products.length + serialized.sales.length + serialized.settings.length;
+    const prevChars = [STORAGE.products, STORAGE.sales, STORAGE.settings].reduce((sum, key) => {
+      const value = localStorage.getItem(key);
+      return sum + (value ? value.length : 0);
+    }, 0);
+    const growthBytes = Math.max(0, (payloadChars - prevChars) * 2);
+    if (growthBytes > 0) {
+      const freeBytes = Math.max(0, storageQuotaBytes() - storageUsedBytes());
+      if (growthBytes > freeBytes + 64 * 1024) {
+        console.error("Storage preflight: growth too large for free space", { growthBytes, freeBytes });
+        return false;
+      }
+    }
+    const entries = [
+      [STORAGE.products, serialized.products],
+      [STORAGE.sales, serialized.sales],
+      [STORAGE.settings, serialized.settings]
+    ];
+    const prevRaw = entries.map(([key]) => localStorage.getItem(key));
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        localStorage.setItem(entries[i][0], entries[i][1]);
+      }
+    } catch (error) {
+      console.error("Storage save failed:", error);
+      for (let i = 0; i < entries.length; i++) {
+        try {
+          if (prevRaw[i] === null) localStorage.removeItem(entries[i][0]);
+          else localStorage.setItem(entries[i][0], prevRaw[i]);
+        } catch (innerError) { /* ignore */ }
+      }
+      return false;
+    }
+    state.products = candidates.products;
+    state.sales = candidates.sales;
+    state.settings = candidates.settings;
+    return true;
+  }
+
   function saveAll() {
-    localStorage.setItem(STORAGE.products, JSON.stringify(state.products));
-    localStorage.setItem(STORAGE.sales, JSON.stringify(state.sales));
-    localStorage.setItem(STORAGE.settings, JSON.stringify(state.settings));
+    if (commitState({})) return true;
+    if (toast) toastMessage("تعذر حفظ البيانات. قلل حجم الصور أو صدر نسخة احتياطية ثم أعد المحاولة.");
+    return false;
+  }
+
+  function saleItemImage(item) {
+    if (item.image) return item.image;
+    const product = state.products.find(productItem => productItem.id === item.productId);
+    return product && product.image ? product.image : "";
+  }
+
+  async function showStorageFullDialog() {
+    const percent = storagePercent();
+    const doExport = await confirmDialogPrompt(
+      "مساحة التخزين ممتلئة",
+      `تعذر حفظ التغييرات لأن مساحة التخزين على هذا الجهاز ممتلئة${percent ? ` (تقريباً ${percent}% مستخدمة)` : ""}.\n\nالحلول:\n• صدّر نسخة احتياطية (JSON) فوراً للحفاظ على بياناتك.\n• احذف صوراً أو أصنافاً قديمة لتقليل الحجم.\n\nلم يتم حفظ أي تغييرات حتى الآن.`,
+      "صدّر نسخة احتياطية"
+    );
+    if (doExport) exportBackup();
+  }
+
+  function storageMeterHtml() {
+    const total = storageQuotaBytes();
+    const used = storageUsedBytes();
+    const percent = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0;
+    const usedMb = (used / (1024 * 1024)).toFixed(1);
+    const totalMb = (total / (1024 * 1024)).toFixed(1);
+    const danger = percent >= 85;
+    const warning = percent >= 70 && percent < 85;
+    return `
+      <div class="storage-meter ${danger ? "danger" : warning ? "warn" : ""}">
+        <div class="storage-meter-head">
+          <strong>مساحة التخزين</strong>
+          <span>${usedMb} / ${totalMb} م.ب (${percent}%)</span>
+        </div>
+        <div class="storage-meter-track"><div class="storage-meter-fill" style="width:${percent}%"></div></div>
+        ${danger
+          ? `<p class="muted" style="color:var(--danger);font-weight:800">⚠️ التخزين يقارب الامتلاء — صدّر نسخة احتياطية واحذف الصور القديمة الآن.</p>`
+          : warning
+            ? `<p class="muted" style="color:var(--warn)">التخزين يمتلئ تدريجياً. يُنصح بتصدير نسخة احتياطية وتقليل حجم الصور.</p>`
+            : `<p class="muted">الأصناف والصور والفواتير تُحفظ في متصفح هذا الجهاز. مساحة متاحة حالياً.</p>`}
+      </div>
+    `;
   }
 
   function saveSession() {
@@ -232,7 +378,12 @@
         search: state.search,
         category: state.category,
         invoiceFilter: state._invoiceFilter || "all",
-        showLowStockOnly: !!state._showLowStockOnly
+        showLowStockOnly: !!state._showLowStockOnly,
+        productDisplayLimit: state._productDisplayLimit,
+        saleDisplayLimit: state._saleDisplayLimit,
+        productView: state._productView,
+        saleView: state._saleView,
+        invoiceView: state._invoiceView
       }));
     } catch (error) {
       /* storage unavailable or full — keep the app running */
@@ -244,7 +395,7 @@
     if (!stored || typeof stored !== "object") return false;
     if (Array.isArray(stored.cart)) {
       state.cart = stored.cart
-        .filter(item => item && state.products.some(product => product.id === item.productId) && Number(item.qty) > 0)
+        .filter(item => item && state.products.some(product => product.id === item.productId && !product.archived) && Number(item.qty) > 0)
         .map(item => {
           const product = state.products.find(product => product.id === item.productId);
           return { productId: item.productId, qty: Math.min(Number(item.qty), product.quantity) };
@@ -263,6 +414,11 @@
     state.category = stored.category || "الكل";
     state._invoiceFilter = stored.invoiceFilter === "today" ? "today" : "all";
     state._showLowStockOnly = !!stored.showLowStockOnly;
+    state._productDisplayLimit = Math.max(PRODUCT_PAGE_SIZE, Number(stored.productDisplayLimit || PRODUCT_PAGE_SIZE));
+    state._saleDisplayLimit = Math.max(SALE_PAGE_SIZE, Number(stored.saleDisplayLimit || SALE_PAGE_SIZE));
+    state._productView = ["grid", "list", "table"].includes(stored.productView) ? stored.productView : "grid";
+    state._saleView = ["list", "grid", "compact"].includes(stored.saleView) ? stored.saleView : "list";
+    state._invoiceView = ["list", "cards", "table"].includes(stored.invoiceView) ? stored.invoiceView : "list";
     const sessionView = stored.view && navItems.some(nav => nav.id === stored.view) ? stored.view : "";
     state.view = viewFromHash() || sessionView || "dashboard";
     return state.cart.length > 0;
@@ -299,6 +455,70 @@
     productForm.addEventListener("submit", saveProductFromForm);
     document.getElementById("productImage").addEventListener("change", previewProductImage);
     document.getElementById("deleteProductButton").addEventListener("click", deleteProductFromForm);
+    const imagePreviewZoomBtn = document.getElementById("imagePreviewZoomBtn");
+    if (imagePreviewZoomBtn) imagePreviewZoomBtn.addEventListener("click", openFormImagePreview);
+    app.addEventListener("click", event => {
+      const zoomEl = event.target.closest("[data-product-zoom]");
+      if (zoomEl) {
+        event.preventDefault();
+        openImagePreview(zoomEl.dataset.productZoom);
+      }
+    });
+    const zoomImg = document.getElementById("imageZoomImg");
+    zoomImg.addEventListener("load", () => {
+      if (imagePreviewDialog.open) resetZoom();
+    });
+    zoomImg.addEventListener("error", () => {
+      if (!zoomImg.src.includes("product-form-preview")) {
+        zoomImg.src = "assets/product-form-preview.png";
+      }
+    });
+    const zoomStage = document.getElementById("imageZoomStage");
+    zoomStage.addEventListener("wheel", event => {
+      event.preventDefault();
+      if (zoomImg.clientWidth > 0) {
+        zoomAtCursor(zoomState.scale + (event.deltaY < 0 ? 0.25 : -0.25), event.clientX, event.clientY);
+      }
+    }, { passive: false });
+    zoomStage.addEventListener("pointerdown", event => {
+      if (zoomState.scale <= 1.01) return;
+      zoomState.panning = true;
+      zoomState.panStartX = event.clientX;
+      zoomState.panStartY = event.clientY;
+      zoomState.panStartTx = zoomState.tx;
+      zoomState.panStartTy = zoomState.ty;
+      zoomImg.classList.add("dragging");
+      zoomStage.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    zoomStage.addEventListener("pointermove", event => {
+      if (!zoomState.panning) return;
+      zoomState.tx = zoomState.panStartTx + (event.clientX - zoomState.panStartX);
+      zoomState.ty = zoomState.panStartTy + (event.clientY - zoomState.panStartY);
+      applyZoomTransform();
+    });
+    const endPan = () => {
+      zoomState.panning = false;
+      zoomImg.classList.remove("dragging");
+    };
+    zoomStage.addEventListener("pointerup", endPan);
+    zoomStage.addEventListener("pointercancel", endPan);
+    zoomStage.addEventListener("dblclick", event => {
+      if (zoomState.scale > 1.01) resetZoom();
+      else zoomAtCursor(3, event.clientX, event.clientY);
+    });
+    document.getElementById("imageZoomIn").addEventListener("click", () => {
+      const rect = zoomStageRect();
+      zoomAtCursor(zoomState.scale * 1.25, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+    document.getElementById("imageZoomOut").addEventListener("click", () => {
+      const rect = zoomStageRect();
+      zoomAtCursor(zoomState.scale / 1.25, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+    document.getElementById("imageZoomFit").addEventListener("click", resetZoom);
+    imagePreviewDialog.addEventListener("click", event => {
+      if (event.target === imagePreviewDialog) imagePreviewDialog.close();
+    });
     document.getElementById("shareInvoiceButton").addEventListener("click", shareInvoice);
     document.getElementById("downloadInvoiceButton").addEventListener("click", downloadInvoicePdf);
     document.getElementById("downloadThermalButton").addEventListener("click", downloadThermalPdf);
@@ -446,7 +666,7 @@
 
   function renderDashboard() {
     const stats = getStats();
-    const lowItems = state.products.filter(product => product.quantity <= product.lowStock);
+    const lowItems = activeProducts().filter(product => product.quantity <= product.lowStock);
     const recentSales = [...state.sales].slice(-3).reverse();
     return `
       <div class="summary-grid">
@@ -516,13 +736,18 @@
             <p class="muted">${isLowOnly ? "تتبع وتعديل الأصناف التي تجاوزت حد التنبيه." : "أضف صور المنتجات، وعدل السعر والكمية وحد التنبيه."}</p>
           </div>
           <div class="inline-actions">
-            ${isLowOnly ? `<button class="ghost" id="clearLowStockFilterBtn" type="button">عرض كل الأصناف (${state.products.length})</button>` : ""}
+            ${isLowOnly ? `<button class="ghost" id="clearLowStockFilterBtn" type="button">عرض كل الأصناف (${activeProducts().length})</button>` : ""}
+            <div class="view-switch" role="tablist" aria-label="طريقة عرض الأصناف">
+              <button class="view-switch-btn ${state._productView === "grid" ? "active" : ""}" data-product-view="grid" type="button">بطاقات</button>
+              <button class="view-switch-btn ${state._productView === "list" ? "active" : ""}" data-product-view="list" type="button">قائمة</button>
+              <button class="view-switch-btn ${state._productView === "table" ? "active" : ""}" data-product-view="table" type="button">جدول</button>
+            </div>
             <button class="primary" id="addProductButton" type="button">إضافة صنف</button>
           </div>
         </div>
         ${filtersHtml()}
       </section>
-      ${products.length ? `<div class="product-grid">${products.map(productCard).join("")}</div>` : emptyProductsHtml()}
+      ${products.length ? pagedProductBody(products) : emptyProductsHtml()}
     `;
   }
 
@@ -550,18 +775,77 @@
 
   function filteredProducts() {
     const query = state.search.trim().toLowerCase();
-    return state.products.filter(product => {
+    return activeProducts().filter(product => {
       const matchesCategory = state.category === "الكل" || product.category === state.category;
       const text = `${product.name} ${product.sku} ${product.color} ${product.size}`.toLowerCase();
       return matchesCategory && (!query || text.includes(query));
     });
   }
 
+  function activeProducts() {
+    return state.products.filter(product => !product.archived);
+  }
+
+  function pagedProductBody(products) {
+    const limit = Math.max(PRODUCT_PAGE_SIZE, Number(state._productDisplayLimit || PRODUCT_PAGE_SIZE));
+    const visible = products.slice(0, limit);
+    const hiddenCount = Math.max(0, products.length - visible.length);
+    return `
+      <div class="result-summary">
+        <strong>${visible.length}</strong>
+        <span>من ${products.length} صنف مطابق</span>
+      </div>
+      ${productViewBody(visible)}
+      ${hiddenCount ? `<button class="ghost action-wide" id="showMoreProductsButton" type="button">عرض ${Math.min(PRODUCT_PAGE_SIZE, hiddenCount)} صنف إضافي</button>` : ""}
+    `;
+  }
+
+  function productViewBody(products) {
+    const view = state._productView || "grid";
+    if (view === "table") return `<div class="scrollable-table">${productsTable(products)}</div>`;
+    if (view === "list") return `<div class="product-list">${products.map(productListRow).join("")}</div>`;
+    return `<div class="product-grid">${products.map(productCard).join("")}</div>`;
+  }
+
+  function productListRow(product) {
+    const low = product.quantity <= product.lowStock;
+    return `
+      <article class="product-list-row">
+        <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}" data-product-zoom="${product.id}" title="معاينة الصورة">
+        <div class="product-list-info">
+          <strong>${escapeHtml(product.name)}</strong>
+          <p class="muted">${escapeHtml(product.sku)} · ${escapeHtml(product.category)} · مقاس ${escapeHtml(product.size)} · ${escapeHtml(product.color)}</p>
+        </div>
+        <strong class="product-list-price">${formatMoney(product.price)}</strong>
+        <span class="status-pill ${low ? "low" : "ok"}">${low ? "منخفض" : "متاح"} · ${product.quantity}</span>
+        <div class="inline-actions">
+          <button class="ghost" data-edit-product="${product.id}" type="button">تعديل</button>
+          <button class="primary" data-add-cart="${product.id}" type="button" ${product.quantity <= 0 ? "disabled" : ""}>إضافة للبيع</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function productsTable(products) {
+    return `<table class="report-table">
+      <thead><tr><th>الصنف</th><th>SKU</th><th>الفئة</th><th>السعر</th><th>الكمية</th><th>الحالة</th><th>إجراء</th></tr></thead>
+      <tbody>${products.map(p => `<tr>
+        <td><span class="cust-cell"><img class="cell-thumb" src="${escapeAttr(p.image)}" alt="" data-product-zoom="${p.id}" title="معاينة الصورة">${escapeHtml(p.name)}</span></td>
+        <td>${escapeHtml(p.sku)}</td>
+        <td>${escapeHtml(p.category)}</td>
+        <td>${formatMoney(p.price)}</td>
+        <td>${p.quantity}</td>
+        <td><span class="status-pill ${p.quantity <= p.lowStock ? "low" : "ok"}">${p.quantity <= p.lowStock ? "منخفض" : "متاح"}</span></td>
+        <td><button class="ghost" data-edit-product="${p.id}" type="button">تعديل</button></td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+  }
+
   function productCard(product) {
     const low = product.quantity <= product.lowStock;
     return `
       <article class="product-card">
-        <div class="product-image">
+        <div class="product-image" data-product-zoom="${product.id}" title="معاينة الصورة">
           <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}">
         </div>
         <div class="product-body">
@@ -586,6 +870,9 @@
 
   function renderSale() {
     const products = filteredProducts().filter(product => product.quantity > 0);
+    const limit = Math.max(SALE_PAGE_SIZE, Number(state._saleDisplayLimit || SALE_PAGE_SIZE));
+    const visibleProducts = products.slice(0, limit);
+    const hiddenCount = Math.max(0, products.length - visibleProducts.length);
     return `
       <div class="sale-grid">
         <section class="panel">
@@ -594,11 +881,19 @@
               <h2>اختيار الأصناف</h2>
               <p class="muted">ابحث بسرعة وأضف للفاتورة الحالية.</p>
             </div>
+            <div class="view-switch" role="tablist" aria-label="طريقة عرض أصناف البيع">
+              <button class="view-switch-btn ${state._saleView === "list" ? "active" : ""}" data-sale-view="list" type="button">قائمة</button>
+              <button class="view-switch-btn ${state._saleView === "grid" ? "active" : ""}" data-sale-view="grid" type="button">شبكة</button>
+              <button class="view-switch-btn ${state._saleView === "compact" ? "active" : ""}" data-sale-view="compact" type="button">مدمجة</button>
+            </div>
           </div>
           ${filtersHtml()}
-          <div class="sale-list" style="margin-top:12px">
-            ${products.length ? products.map(saleProductRow).join("") : `<div class="empty">لا توجد أصناف متاحة للبيع بهذا البحث.</div>`}
+          <div class="result-summary">
+            <strong>${visibleProducts.length}</strong>
+            <span>من ${products.length} صنف متاح للبيع</span>
           </div>
+          ${visibleProducts.length ? saleProductBody(visibleProducts) : `<div class="empty">لا توجد أصناف متاحة للبيع بهذا البحث.</div>`}
+          ${hiddenCount ? `<button class="ghost action-wide" id="showMoreSaleProductsButton" type="button">عرض ${Math.min(SALE_PAGE_SIZE, hiddenCount)} صنف إضافي</button>` : ""}
         </section>
         <aside class="cart-panel">
           <h2>سلة البيع</h2>
@@ -636,12 +931,54 @@
   function saleProductRow(product) {
     return `
       <article class="sale-product">
-        <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}">
+        <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}" data-product-zoom="${product.id}" title="معاينة الصورة">
         <div>
           <strong>${escapeHtml(product.name)}</strong>
           <p class="muted">${escapeHtml(product.sku)} · ${escapeHtml(product.size)} · متاح ${product.quantity}</p>
         </div>
         <button class="primary" data-add-cart="${product.id}" type="button">إضافة</button>
+      </article>
+    `;
+  }
+
+  function saleProductBody(products) {
+    const view = state._saleView || "list";
+    if (view === "grid") return `<div class="product-grid sale-grid">${products.map(saleProductCard).join("")}</div>`;
+    if (view === "compact") return `<div class="sale-compact">${products.map(saleCompactRow).join("")}</div>`;
+    return `<div class="sale-list" style="margin-top:12px">${products.map(saleProductRow).join("")}</div>`;
+  }
+
+  function saleProductCard(product) {
+    const low = product.quantity <= product.lowStock;
+    return `
+      <article class="product-card">
+        <div class="product-image" data-product-zoom="${product.id}" title="معاينة الصورة">
+          <img src="${escapeAttr(product.image)}" alt="${escapeAttr(product.name)}">
+        </div>
+        <div class="product-body">
+          <div class="product-title">
+            <h3>${escapeHtml(product.name)}</h3>
+            <strong>${formatMoney(product.price)}</strong>
+          </div>
+          <div class="inline-actions">
+            <span class="sku">${escapeHtml(product.sku)}</span>
+            <span class="status-pill ${low ? "low" : "ok"}">${low ? "منخفض" : "متاح"}</span>
+          </div>
+          <p class="muted">مقاس ${escapeHtml(product.size)}، متاح ${product.quantity}</p>
+          <button class="primary action-wide" data-add-cart="${product.id}" type="button" ${product.quantity <= 0 ? "disabled" : ""}>إضافة</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function saleCompactRow(product) {
+    return `
+      <article class="sale-compact-row">
+        <div class="sale-compact-info">
+          <strong>${escapeHtml(product.name)}</strong>
+          <p class="muted">${escapeHtml(product.sku)} · ${formatMoney(product.price)} · متاح ${product.quantity}</p>
+        </div>
+        <button class="primary" data-add-cart="${product.id}" type="button" ${product.quantity <= 0 ? "disabled" : ""}>إضافة</button>
       </article>
     `;
   }
@@ -699,14 +1036,64 @@
           </div>
           <div class="inline-actions">
             ${isToday ? `<button class="ghost" id="clearInvoiceFilterBtn" type="button">عرض كل الفواتير (${state.sales.length})</button>` : ""}
+            <div class="view-switch" role="tablist" aria-label="طريقة عرض الفواتير">
+              <button class="view-switch-btn ${state._invoiceView === "list" ? "active" : ""}" data-invoice-view="list" type="button">قائمة</button>
+              <button class="view-switch-btn ${state._invoiceView === "cards" ? "active" : ""}" data-invoice-view="cards" type="button">بطاقات</button>
+              <button class="view-switch-btn ${state._invoiceView === "table" ? "active" : ""}" data-invoice-view="table" type="button">جدول</button>
+            </div>
             <button class="primary" data-go="sale" type="button">فاتورة جديدة</button>
           </div>
         </div>
-        <div class="invoice-list">
-          ${sales.length ? sales.map(invoiceRow).join("") : `<div class="empty">لا توجد فواتير مطابقة.</div>`}
-        </div>
+        ${sales.length ? invoiceViewBody(sales) : `<div class="empty">لا توجد فواتير مطابقة.</div>`}
       </section>
     `;
+  }
+
+  function invoiceViewBody(sales) {
+    const view = state._invoiceView || "list";
+    if (view === "cards") return `<div class="invoice-cards">${sales.map(invoiceCard).join("")}</div>`;
+    if (view === "table") return `<div class="scrollable-table">${invoicesTable(sales)}</div>`;
+    return `<div class="invoice-list">${sales.map(invoiceRow).join("")}</div>`;
+  }
+
+  function invoiceCard(sale) {
+    const net = netSale(sale);
+    const hasReturns = (sale.returns || []).length > 0;
+    const itemCount = sale.items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+    return `
+      <article class="invoice-card">
+        <div class="invoice-card-head">
+          <strong>${escapeHtml(sale.number)}</strong>
+          ${hasReturns ? '<span class="status-pill low">مرتجع</span>' : ""}
+        </div>
+        <p class="muted">${dateTime(sale.date)}</p>
+        <p class="muted">العميل: ${escapeHtml(sale.customerName || "عميل نقدي")} · ${escapeHtml(sale.paymentMethod || "نقدا")}</p>
+        <div class="invoice-card-total">
+          <span>${itemCount} قطعة</span>
+          <strong>${formatMoney(net.total)}</strong>
+        </div>
+        <button class="ghost action-wide" data-view-invoice="${sale.id}" type="button">عرض الفاتورة</button>
+      </article>
+    `;
+  }
+
+  function invoicesTable(sales) {
+    return `<table class="report-table">
+      <thead><tr><th>الرقم</th><th>التاريخ</th><th>العميل</th><th>طريقة الدفع</th><th>الحالة</th><th>الإجمالي</th><th>إجراء</th></tr></thead>
+      <tbody>${sales.map(sale => {
+        const net = netSale(sale);
+        const hasReturns = (sale.returns || []).length > 0;
+        return `<tr>
+          <td>${escapeHtml(sale.number)}</td>
+          <td>${dateTime(sale.date)}</td>
+          <td>${escapeHtml(sale.customerName || "عميل نقدي")}</td>
+          <td>${escapeHtml(sale.paymentMethod || "نقدا")}</td>
+          <td>${hasReturns ? '<span class="status-pill low">مرتجع</span>' : '<span class="status-pill ok">مكتملة</span>'}</td>
+          <td><strong>${formatMoney(net.total)}</strong></td>
+          <td><button class="ghost" data-view-invoice="${sale.id}" type="button">عرض</button></td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
   }
 
   function invoiceRow(sale) {
@@ -1070,7 +1457,7 @@
     const profitMargins = getProfitMargins();
     const categoryTotals = totalsByCategory();
     const topProducts = topProductsByQty();
-    const lowItems = state.products.filter(p => p.quantity <= p.lowStock);
+    const lowItems = activeProducts().filter(p => p.quantity <= p.lowStock);
     return `
       <section class="panel" id="discountSection">
         <div class="panel-head"><h2>ملخص الخصومات والشحن والضرائب</h2></div>
@@ -1293,7 +1680,7 @@
   }
 
   function filteredReportProducts() {
-    let list = state.products;
+    let list = activeProducts();
     if (state._reportCategory && state._reportCategory !== "الكل") {
       list = list.filter(p => p.category === state._reportCategory);
     }
@@ -1445,6 +1832,13 @@
               </label>
             `).join("")}
           </div>
+          <label class="check-line">
+            <input id="showInvoiceQr" type="checkbox" ${state.settings.showInvoiceQr !== false ? "checked" : ""}>
+            <span>
+              <strong>إظهار رمز QR في الفواتير</strong>
+              <small>عند التفعيل يظهر رمز QR للتحقق في فاتورة PDF والفاتورة الحرارية ومعاينة الفاتورة.</small>
+            </span>
+          </label>
         </section>
 
         <section class="panel">
@@ -1461,6 +1855,7 @@
               <input id="importBackupInput" type="file" accept=".json" style="display:none">
             </label>
           </div>
+          ${storageMeterHtml()}
           <p class="muted" style="margin-top:10px">يتم حفظ الأصناف بالفواتير والإعدادات في ملف واحد يمكنك نقله لأي جهاز أو موبايل آخر.</p>
         </section>
 
@@ -1514,25 +1909,64 @@
     app.querySelectorAll("[data-view-invoice]").forEach(button => {
       button.addEventListener("click", () => showInvoice(button.dataset.viewInvoice));
     });
+    app.querySelectorAll("[data-product-view]").forEach(button => {
+      button.addEventListener("click", () => {
+        state._productView = button.dataset.productView;
+        saveSession();
+        render();
+      });
+    });
+    app.querySelectorAll("[data-sale-view]").forEach(button => {
+      button.addEventListener("click", () => {
+        state._saleView = button.dataset.saleView;
+        saveSession();
+        render();
+      });
+    });
+    app.querySelectorAll("[data-invoice-view]").forEach(button => {
+      button.addEventListener("click", () => {
+        state._invoiceView = button.dataset.invoiceView;
+        saveSession();
+        render();
+      });
+    });
 
     const search = document.getElementById("productSearch");
     if (search) search.addEventListener("input", event => {
       state.search = event.target.value;
+      state._productDisplayLimit = PRODUCT_PAGE_SIZE;
+      state._saleDisplayLimit = SALE_PAGE_SIZE;
       render();
     });
     const category = document.getElementById("categoryFilter");
     if (category) category.addEventListener("change", event => {
       state.category = event.target.value;
+      state._productDisplayLimit = PRODUCT_PAGE_SIZE;
+      state._saleDisplayLimit = SALE_PAGE_SIZE;
       render();
     });
     const clear = document.getElementById("clearFiltersButton");
     if (clear) clear.addEventListener("click", () => {
       state.search = "";
       state.category = "الكل";
+      state._productDisplayLimit = PRODUCT_PAGE_SIZE;
+      state._saleDisplayLimit = SALE_PAGE_SIZE;
       render();
     });
     const addProduct = document.getElementById("addProductButton");
     if (addProduct) addProduct.addEventListener("click", () => openProductDialog());
+    const showMoreProducts = document.getElementById("showMoreProductsButton");
+    if (showMoreProducts) showMoreProducts.addEventListener("click", () => {
+      state._productDisplayLimit = Math.max(PRODUCT_PAGE_SIZE, Number(state._productDisplayLimit || PRODUCT_PAGE_SIZE)) + PRODUCT_PAGE_SIZE;
+      saveSession();
+      render();
+    });
+    const showMoreSaleProducts = document.getElementById("showMoreSaleProductsButton");
+    if (showMoreSaleProducts) showMoreSaleProducts.addEventListener("click", () => {
+      state._saleDisplayLimit = Math.max(SALE_PAGE_SIZE, Number(state._saleDisplayLimit || SALE_PAGE_SIZE)) + SALE_PAGE_SIZE;
+      saveSession();
+      render();
+    });
 
     app.querySelectorAll("[data-cart-inc]").forEach(button => button.addEventListener("click", () => changeCartQty(button.dataset.cartInc, 1)));
     app.querySelectorAll("[data-cart-dec]").forEach(button => button.addEventListener("click", () => changeCartQty(button.dataset.cartDec, -1)));
@@ -1598,6 +2032,7 @@
     const clearLowFilter = document.getElementById("clearLowStockFilterBtn");
     if (clearLowFilter) clearLowFilter.addEventListener("click", () => {
       state._showLowStockOnly = false;
+      state._productDisplayLimit = PRODUCT_PAGE_SIZE;
       render();
     });
 
@@ -1666,8 +2101,11 @@
     if (settingsForm) settingsForm.addEventListener("submit", saveSettings);
     app.querySelectorAll("input[name='invoiceTemplate']").forEach(input => {
       input.addEventListener("change", () => {
-        state.settings.invoiceTemplate = input.value;
-        saveAll();
+        const nextSettings = { ...state.settings, invoiceTemplate: input.value };
+        if (!commitState({ settings: nextSettings })) {
+          showStorageFullDialog();
+          return;
+        }
         toastMessage(`تم اختيار قالب الفاتورة: ${(INVOICE_TEMPLATES[input.value] || {}).label || input.value}`);
       });
     });
@@ -1677,8 +2115,11 @@
     if (logoUpload) logoUpload.addEventListener("change", handleLogoUpload);
     const removeLogo = document.getElementById("removeLogoBtn");
     if (removeLogo) removeLogo.addEventListener("click", () => {
-      state.settings.logo = "";
-      saveAll();
+      const nextSettings = { ...state.settings, logo: "" };
+      if (!commitState({ settings: nextSettings })) {
+        showStorageFullDialog();
+        return;
+      }
       applySettings();
       render();
       toastMessage("تم إزالة الشعار");
@@ -1740,22 +2181,179 @@
   function previewProductImage(event) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const preview = document.getElementById("imagePreview");
-      preview.src = reader.result;
-      preview.dataset.image = reader.result;
-    };
-    reader.readAsDataURL(file);
+    compressImageFile(file, PRODUCT_IMAGE_MAX_SIZE, PRODUCT_IMAGE_QUALITY)
+      .then(dataUrl => {
+        const preview = document.getElementById("imagePreview");
+        preview.src = dataUrl;
+        preview.dataset.image = dataUrl;
+      })
+      .catch(() => readFileAsDataUrl(file).then(dataUrl => {
+        const preview = document.getElementById("imagePreview");
+        preview.src = dataUrl;
+        preview.dataset.image = dataUrl;
+      }));
   }
 
-  function saveProductFromForm(event) {
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function compressImageFile(file, maxSize, quality) {
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = await loadImage(dataUrl);
+    const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+    if (scale >= 1 && file.size < 180000) return dataUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = src;
+    });
+  }
+
+  const zoomState = {
+    scale: 1,
+    tx: 0,
+    ty: 0,
+    panning: false,
+    panStartX: 0,
+    panStartY: 0,
+    panStartTx: 0,
+    panStartTy: 0
+  };
+
+  function openImagePreview(productId) {
+    const product = state.products.find(item => item.id === productId);
+    if (!product) return;
+    const low = product.quantity <= product.lowStock;
+    fillImagePreview({
+      src: product.image || "assets/product-form-preview.png",
+      name: product.name,
+      details: `${product.sku} · ${product.category} · مقاس ${product.size} · لون ${product.color}`,
+      price: formatMoney(product.price),
+      stockText: low ? "مخزون منخفض" : "متاح",
+      stockClass: low ? "low" : "ok"
+    });
+  }
+
+  function openFormImagePreview(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    const preview = document.getElementById("imagePreview");
+    const size = document.getElementById("productSize").value.trim();
+    const color = document.getElementById("productColor").value.trim();
+    fillImagePreview({
+      src: preview?.dataset.image || preview?.src || "assets/product-form-preview.png",
+      name: document.getElementById("productName").value.trim() || "صنف جديد",
+      details: [
+        document.getElementById("productSku").value.trim(),
+        document.getElementById("productCategory").value,
+        size ? `مقاس ${size}` : "",
+        color ? `لون ${color}` : ""
+      ].filter(Boolean).join(" · ") || "معاينة الصورة",
+      price: formatMoney(Number(document.getElementById("productPrice").value || 0)),
+      stockText: "معاينة",
+      stockClass: "ok"
+    });
+  }
+
+  function fillImagePreview({ src, name, details, price, stockText, stockClass }) {
+    imagePreviewDialog.showModal();
+    const img = document.getElementById("imageZoomImg");
+    img.src = src || "assets/product-form-preview.png";
+    document.getElementById("imageZoomTitle").textContent = name || "معاينة الصورة";
+    document.getElementById("imageZoomName").textContent = name || "";
+    document.getElementById("imageZoomDetails").textContent = details || "";
+    document.getElementById("imageZoomPrice").textContent = price || "";
+    const stock = document.getElementById("imageZoomStock");
+    stock.textContent = stockText || "";
+    stock.className = `status-pill ${stockClass || "ok"}`;
+    resetZoom();
+  }
+
+  function clampNum(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function zoomStageRect() {
+    return document.getElementById("imageZoomStage").getBoundingClientRect();
+  }
+
+  function updateZoomLevel() {
+    const level = document.getElementById("imageZoomLevel");
+    if (level) level.textContent = zoomState.scale <= 1.01 ? "ملاءمة" : `${Math.round(zoomState.scale * 100)}%`;
+  }
+
+  function applyZoomTransform() {
+    const img = document.getElementById("imageZoomImg");
+    const rect = zoomStageRect();
+    const dispW = img.clientWidth * zoomState.scale;
+    const dispH = img.clientHeight * zoomState.scale;
+    zoomState.tx = clampNum(zoomState.tx, -dispW / 2, dispW / 2);
+    zoomState.ty = clampNum(zoomState.ty, -dispH / 2, dispH / 2);
+    img.style.transform = `translate3d(${zoomState.tx}px, ${zoomState.ty}px, 0) scale(${zoomState.scale})`;
+    img.classList.toggle("zoomed", zoomState.scale > 1.01);
+  }
+
+  function resetZoom() {
+    zoomState.scale = 1;
+    zoomState.tx = 0;
+    zoomState.ty = 0;
+    applyZoomTransform();
+    updateZoomLevel();
+  }
+
+  function zoomAtCursor(nextScale, clientX, clientY) {
+    const img = document.getElementById("imageZoomImg");
+    if (!img.clientWidth || !img.clientHeight) return;
+    const rect = zoomStageRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const s0 = zoomState.scale;
+    const s1 = clampNum(nextScale, 1, 8);
+    const dispW0 = img.clientWidth * s0;
+    const dispH0 = img.clientHeight * s0;
+    const nx = (px - rect.width / 2 - zoomState.tx) / dispW0 + 0.5;
+    const ny = (py - rect.height / 2 - zoomState.ty) / dispH0 + 0.5;
+    zoomState.scale = s1;
+    zoomState.tx = (px - rect.width / 2) - (nx - 0.5) * img.clientWidth * s1;
+    zoomState.ty = (py - rect.height / 2) - (ny - 0.5) * img.clientHeight * s1;
+    applyZoomTransform();
+    updateZoomLevel();
+  }
+
+  async function saveProductFromForm(event) {
     event.preventDefault();
     const id = document.getElementById("productId").value || cryptoRandomId("p");
+    const sku = document.getElementById("productSku").value.trim();
+    const duplicateSku = activeProducts().some(item => item.id !== id && String(item.sku || "").trim().toLowerCase() === sku.toLowerCase());
+    if (duplicateSku) {
+      toastMessage("رمز SKU مستخدم بالفعل لصنف آخر");
+      return;
+    }
+    const existing = state.products.find(item => item.id === id);
     const product = {
+      ...(existing || {}),
       id,
       name: document.getElementById("productName").value.trim(),
-      sku: document.getElementById("productSku").value.trim(),
+      sku,
       category: document.getElementById("productCategory").value,
       size: document.getElementById("productSize").value.trim(),
       color: document.getElementById("productColor").value.trim(),
@@ -1763,31 +2361,55 @@
       price: Number(document.getElementById("productPrice").value || 0),
       cost: Number(document.getElementById("productCost").value || 0),
       lowStock: Number(document.getElementById("productLow").value || 0),
-      image: document.getElementById("imagePreview").dataset.image || "assets/product-form-preview.png"
+      image: document.getElementById("imagePreview").dataset.image || "assets/product-form-preview.png",
+      archived: false,
+      updatedAt: new Date().toISOString()
     };
-    const index = state.products.findIndex(item => item.id === id);
-    if (index >= 0) state.products[index] = product;
-    else state.products.unshift(product);
-    saveAll();
+    const nextProducts = state.products.slice();
+    const index = nextProducts.findIndex(item => item.id === id);
+    if (index >= 0) nextProducts[index] = product;
+    else nextProducts.unshift({ ...product, createdAt: new Date().toISOString() });
+    if (!commitState({ products: nextProducts })) {
+      await showStorageFullDialog();
+      return;
+    }
     productDialog.close();
     toastMessage("تم حفظ الصنف");
     render();
   }
 
-  function deleteProductFromForm() {
+  async function deleteProductFromForm() {
     const id = document.getElementById("productId").value;
-    if (!id || !confirm("هل تريد حذف هذا الصنف؟")) return;
-    state.products = state.products.filter(product => product.id !== id);
-    state.cart = state.cart.filter(item => item.productId !== id);
-    saveAll();
+    if (!id) return;
+    const product = state.products.find(item => item.id === id);
+    if (!product) return;
+    const invoiceCount = state.sales.filter(sale => sale.items.some(item => item.productId === id)).length;
+    const ok = await confirmDialogPrompt(
+      "حذف الصنف نهائياً",
+      `سيتم حذف الصنف "${product.name}" نهائياً من السجل ولا يمكن التراجع عن هذا الإجراء.` +
+      (invoiceCount > 0
+        ? `\n\nظهر هذا الصنف في ${invoiceCount} فاتورة محفوظة — ستبقى تلك الفواتير كما هي ببياناتها، لكن لن تعود كمياته إلى المخزون عند أي إرجاع لاحق.`
+        : `\n\nلم يظهر هذا الصنف في أي فاتورة محفوظة، وسيتم حذفه بالكامل.`),
+      "حذف نهائي"
+    );
+    if (!ok) return;
+    const nextProducts = state.products.filter(item => item.id !== id);
+    const nextCart = state.cart.filter(line => line.productId !== id);
+    if (!commitState({ products: nextProducts })) {
+      await showStorageFullDialog();
+      return;
+    }
+    state.cart = nextCart;
+    if (state._returnSel) delete state._returnSel[id];
+    saveSession();
     productDialog.close();
-    toastMessage("تم حذف الصنف");
+    toastMessage(`تم حذف الصنف "${product.name}" نهائياً`);
     render();
   }
 
   function addToCart(productId) {
     const product = state.products.find(item => item.id === productId);
-    if (!product || product.quantity <= 0) {
+    if (!product || product.archived || product.quantity <= 0) {
       toastMessage("هذا الصنف غير متاح في المخزون");
       return;
     }
@@ -1809,7 +2431,7 @@
   function changeCartQty(productId, delta) {
     const product = state.products.find(item => item.id === productId);
     const line = state.cart.find(item => item.productId === productId);
-    if (!product || !line) return;
+    if (!product || product.archived || !line) return;
     const next = line.qty + delta;
     if (next <= 0) return removeFromCart(productId);
     if (next > product.quantity) {
@@ -1830,6 +2452,23 @@
   function checkoutCart() {
     if (!state.cart.length) {
       toastMessage("أضف صنفا واحدا على الأقل للسلة");
+      return;
+    }
+    const invalidLine = state.cart.find(line => {
+      const product = state.products.find(item => item.id === line.productId);
+      return !product || product.archived || product.quantity <= 0 || line.qty > product.quantity;
+    });
+    if (invalidLine) {
+      toastMessage("راجع السلة: يوجد صنف غير متاح أو كمية أكبر من المخزون");
+      state.cart = state.cart.filter(line => {
+        const product = state.products.find(item => item.id === line.productId);
+        return product && !product.archived && product.quantity > 0;
+      }).map(line => {
+        const product = state.products.find(item => item.id === line.productId);
+        return { productId: line.productId, qty: Math.min(line.qty, product.quantity) };
+      });
+      saveSession();
+      render();
       return;
     }
     const discount = Number(document.getElementById("discountAmount")?.value || 0);
@@ -1857,7 +2496,8 @@
           name: product.name,
           sku: product.sku,
           category: product.category,
-          image: product.image,
+          size: product.size,
+          color: product.color,
           qty: line.qty,
           price: product.price,
           cost: product.cost,
@@ -1865,11 +2505,15 @@
         };
       })
     };
-    sale.items.forEach(item => {
-      const product = state.products.find(productItem => productItem.id === item.productId);
-      if (product) product.quantity = Math.max(0, product.quantity - item.qty);
+    const nextProducts = state.products.map(productItem => {
+      const line = state.cart.find(cartLine => cartLine.productId === productItem.id);
+      return line ? { ...productItem, quantity: Math.max(0, productItem.quantity - line.qty) } : productItem;
     });
-    state.sales.push(sale);
+    const nextSales = state.sales.concat(sale);
+    if (!commitState({ products: nextProducts, sales: nextSales })) {
+      showStorageFullDialog();
+      return;
+    }
     state.cart = [];
     state._saleCustomerName = "";
     state._saleCustomerPhone = "";
@@ -1877,7 +2521,6 @@
     state._saleShipping = 0;
     state._saleTaxFree = false;
     state._salePayment = "نقدا";
-    saveAll();
     saveSession();
     render();
     showInvoice(sale.id);
@@ -1887,7 +2530,7 @@
   function calculateCartTotals(discountValue, shippingValue, taxFree) {
     const subtotal = state.cart.reduce((sum, line) => {
       const product = state.products.find(item => item.id === line.productId);
-      return sum + (product ? product.price * line.qty : 0);
+      return sum + (product && !product.archived ? product.price * line.qty : 0);
     }, 0);
     const discount = Math.min(Math.max(Number(discountValue || 0), 0), subtotal);
     const shipping = Math.max(Number(shippingValue || 0), 0);
@@ -1944,27 +2587,141 @@
   }
 
   function invoiceHtml(sale) {
+    const tpl = INVOICE_TEMPLATES[state.settings.invoiceTemplate] || INVOICE_TEMPLATES.classic;
+    const accent = docAccent();
     const logoHtml = state.settings.logo
-      ? `<img class="invoice-logo" src="${escapeAttr(state.settings.logo)}" alt="شعار">`
-      : `<div class="invoice-mark">${escapeHtml(state.settings.storeName.charAt(0) || "خ")}</div>`;
+      ? `<img class="invoice-logo" src="${escapeAttr(state.settings.logo)}" alt="شعار" style="width:${tpl.logoSize || 62}px;height:${tpl.logoSize || 62}px;border-radius:8px;">`
+      : `<div class="invoice-mark" style="width:${tpl.logoSize || 62}px;height:${tpl.logoSize || 62}px;font-size:${Math.round((tpl.logoSize || 62) / 2)}px;">${escapeHtml(state.settings.storeName.charAt(0) || "خ")}</div>`;
     const net = netSale(sale);
     const returns = sale.returns || [];
     const companyLines = companyInfoLines();
+
+    const storeFont = tpl.storeFont || "Cairo";
+    const storeSize = tpl.storeSize || 23;
+    const storeColor = tpl.storeColor || "var(--accent)";
+    const subColor = tpl.subColor || "#6b7280";
+    const ruleColor = tpl.ruleColor || "#e5e7eb";
+    const ruleThickness = tpl.ruleThickness || 1.2;
+    const sectionTitleColor = tpl.sectionTitleColor || accent;
+    const itemMetaColor = tpl.itemMetaColor || "#9ca3af";
+    const footerRuleColor = tpl.footerRule || "#E5E7EB";
+    const footerTextColor = tpl.footerTextColor || "#6b7280";
+    const thanksColor = tpl.thanksColor || "#9ca3af";
+    const headerStyle = tpl.headerStyle || "plain";
+    const metaStyle = tpl.metaStyle || "fill";
+    const totalsStyle = tpl.totalsStyle || "card";
+    const grandStyle = tpl.grandStyle || "accent";
+    const tableStripes = tpl.tableStripes !== false;
+
+    let brandBg = "transparent";
+    let brandBorder = `${ruleThickness}px solid ${ruleColor}`;
+    let brandPadding = "14px";
+    let brandRadius = "0";
+    let effectiveStoreColor = storeColor;
+    let effectiveSubColor = subColor;
+    if (headerStyle === "band" || headerStyle === "runway") {
+      brandBg = tpl.pdfAccent || accent;
+      brandBorder = "none";
+      brandPadding = "16px";
+      brandRadius = "8px";
+      effectiveStoreColor = tpl.storeColor || "#ffffff";
+      effectiveSubColor = tpl.subColor || "#dce8e4";
+    } else if (headerStyle === "boutique") {
+      brandBg = "#fce7f0";
+      brandBorder = "none";
+      brandPadding = "16px";
+      brandRadius = "8px";
+    } else if (headerStyle === "atelier") {
+      brandBg = "#efe8dc";
+      brandBorder = "none";
+      brandPadding = "16px";
+      brandRadius = "8px";
+    } else if (headerStyle === "dark-band") {
+      brandBg = "#1f1f1f";
+      brandBorder = "none";
+      brandPadding = "16px";
+      brandRadius = "8px";
+      effectiveStoreColor = tpl.storeColor || "#d4b483";
+      effectiveSubColor = tpl.subColor || "#c6b491";
+    }
+
+    let metaBg = "#fbfaf7";
+    let metaBorder = `${ruleThickness}px solid ${ruleColor}`;
+    let metaPadding = "0";
+    if (metaStyle === "border") {
+      metaBg = "#fff";
+      metaBorder = "1px solid #e5e7eb";
+      metaPadding = "10px";
+    } else if (metaStyle === "rose") {
+      metaBg = "#fce7f0";
+      metaBorder = "none";
+      metaPadding = "10px";
+    } else if (metaStyle === "sand") {
+      metaBg = "#f5f0e8";
+      metaBorder = "none";
+      metaPadding = "10px";
+    } else if (metaStyle === "mint") {
+      metaBg = "#ecfdf9";
+      metaBorder = "none";
+      metaPadding = "10px";
+    } else if (metaStyle === "gold") {
+      metaBg = "#f5f0e8";
+      metaBorder = `1px solid ${tpl.gold || "#b08d57"}`;
+      metaPadding = "10px";
+    } else if (metaStyle === "plain") {
+      metaBg = "transparent";
+      metaBorder = "none";
+      metaPadding = "0";
+    }
+
+    let totalsBg = "#fff";
+    let totalsBorder = "1px solid " + ruleColor;
+    let totalsPadding = "12px";
+    let totalsRadius = "8px";
+    if (totalsStyle === "plain" || totalsStyle === "plain-gold") {
+      totalsBg = "transparent";
+      totalsBorder = "none";
+      totalsPadding = "0";
+      totalsRadius = "0";
+    }
+
+    let grandBg = "transparent";
+    let grandColor = "var(--accent)";
+    let grandPadding = "0";
+    let grandRadius = "0";
+    const grandFill = (bg) => {
+      grandBg = bg;
+      grandColor = bg && !isDarkHex(bg) ? "#111827" : (tpl.grandText || "#ffffff");
+      grandPadding = "10px 14px";
+      grandRadius = "6px";
+    };
+    if (grandStyle === "accent") {
+      grandFill(tpl.totalRowColor || accent);
+    } else if (grandStyle === "rose") {
+      grandFill("#7f1d4e");
+    } else if (grandStyle === "sand") {
+      grandFill("#4b4238");
+    } else if (grandStyle === "mint") {
+      grandFill("#164e49");
+    } else if (grandStyle === "gold") {
+      grandFill(tpl.gold || tpl.totalRowColor || "#55504a");
+    }
+
     return `
-      <article class="invoice-paper">
-        <header class="invoice-brand">
+      <article class="invoice-paper" data-template="${state.settings.invoiceTemplate}">
+        <header class="invoice-brand" style="background:${brandBg};border:${brandBorder};padding:${brandPadding};border-radius:${brandRadius};">
           <div>
-            <h2>${escapeHtml(state.settings.storeName)}</h2>
-            <p>متجر ملابس وأزياء</p>
+            <h2 style="font-family:${storeFont};font-size:${storeSize}px;color:${effectiveStoreColor};">${escapeHtml(state.settings.storeName)}</h2>
+            <p style="color:${effectiveSubColor};">متجر ملابس وأزياء</p>
           </div>
           ${logoHtml}
         </header>
-        <div class="invoice-dochead">
-          <h3>فاتورة مبيعات</h3>
+        <div class="invoice-dochead" style="background:${metaBg};border:${metaBorder};">
+          <h3 style="color:${sectionTitleColor};">فاتورة مبيعات</h3>
           <strong>${escapeHtml(sale.number)}</strong>
           <small>${dateTime(sale.date)}</small>
         </div>
-        <section class="invoice-meta">
+        <section class="invoice-meta" style="background:${metaBg};border:${metaBorder};padding:${metaPadding};border-radius:${metaStyle === 'border' || metaStyle === 'rose' || metaStyle === 'sand' || metaStyle === 'mint' ? '8px' : '0'};">
           <p><strong>التاريخ:</strong> ${dateTime(sale.date)}</p>
           <p><strong>الدفع:</strong> ${escapeHtml(sale.paymentMethod)}</p>
           <p><strong>العميل:</strong> ${escapeHtml(sale.customerName)}</p>
@@ -1984,13 +2741,14 @@
           </thead>
           <tbody>
             ${sale.items.map((item, index) => {
-              const product = state.products.find(p => p.id === item.productId);
-              const image = product && product.image ? product.image : "";
+              const image = saleItemImage(item);
+              const metaLine = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
+              const rowBg = (tableStripes && index % 2 === 1) ? `background:#f9fafb;` : "";
               return `
-              <tr>
+              <tr style="${rowBg}">
                 <td>${index + 1}</td>
                 <td class="invoice-thumb">${image ? `<img src="${escapeAttr(image)}" alt="${escapeHtml(item.name)}">` : ""}</td>
-                <td>${escapeHtml(item.name)}<br><small>${escapeHtml(item.sku)}</small></td>
+                <td>${escapeHtml(item.name)}<br><small style="color:${itemMetaColor};">${escapeHtml(metaLine)}</small></td>
                 <td>${item.qty}</td>
                 <td>${formatMoney(item.price)}</td>
                 <td>${formatMoney(item.total)}</td>
@@ -2015,7 +2773,7 @@
             </div>
           `).join("")}
         </section>` : ""}
-        <section class="cart-totals">
+        <section class="cart-totals" style="background:${totalsBg};border:${totalsBorder};padding:${totalsPadding};border-radius:${totalsRadius};${totalsStyle === 'card' || totalsStyle === 'rose-card' || totalsStyle === 'sand-card' || totalsStyle === 'mint-card' ? 'box-shadow:0 1px 3px rgba(0,0,0,0.05);' : ''}">
           <div class="total-row"><span>المجموع الفرعي</span><strong>${formatMoney(sale.subtotal)}</strong></div>
           <div class="total-row"><span>الخصم</span><strong>${formatMoney(sale.discount)}</strong></div>
           ${sale.taxFree
@@ -2023,14 +2781,14 @@
             : `<div class="total-row"><span>ضريبة ${sale.taxRate}%</span><strong>${formatMoney(sale.tax)}</strong></div>`}
           ${sale.shipping ? `<div class="total-row"><span>مصاريف الشحن</span><strong>${formatMoney(sale.shipping)}</strong></div>` : ""}
           ${net.returnAmount > 0 ? `<div class="total-row return"><span>المجموع المرتجع</span><strong>− ${formatMoney(net.returnAmount)}</strong></div>` : ""}
-          <div class="total-row grand"><span>الإجمالي النهائي</span><strong>${formatMoney(net.total)}</strong></div>
-          <div class="total-row words"><span>المبلغ بالحروف</span><strong>${escapeHtml(amountInWords(net.total))}</strong></div>
+          <div class="total-row grand" style="background:${grandBg};color:${grandColor};padding:${grandPadding};border-radius:${grandRadius};${grandStyle === 'text' ? 'border-top:2px solid ' + ruleColor + ';' : 'border:none;'}"><span>الإجمالي النهائي</span><strong>${formatMoney(net.total)}</strong></div>
+          <div class="total-row words" style="border-top:1px dashed ${ruleColor};"><span>المبلغ بالحروف</span><strong>${escapeHtml(amountInWords(net.total))}</strong></div>
         </section>
-        <section class="code-strip" aria-label="كود الفاتورة">
-          <div class="qr">${qrCells(sale.number)}</div>
+        <section class="code-strip" style="border-top:${ruleThickness}px solid ${footerRuleColor};color:${footerTextColor};">
+          ${state.settings.showInvoiceQr !== false ? `<div class="qr">${qrCells(sale.number)}</div>` : ""}
           <div class="barcode">${barcodeLines(sale.number)}</div>
-          ${companyLines.length ? `<p>${escapeHtml(companyLines.join("  ·  "))}</p>` : ""}
-          <p>${escapeHtml(state.settings.invoiceFooter)}</p>
+          ${companyLines.length ? `<p style="color:${footerTextColor};">${escapeHtml(companyLines.join("  ·  "))}</p>` : ""}
+          <p style="color:${thanksColor};">${escapeHtml(state.settings.invoiceFooter)}</p>
         </section>
       </article>
     `;
@@ -2056,13 +2814,96 @@
   async function shareInvoice() {
     const sale = state.sales.find(item => item.id === state.currentInvoiceId);
     if (!sale) return;
-    const text = invoiceText(sale);
-    if (navigator.share) {
-      await navigator.share({ title: sale.number, text }).catch(() => {});
-    } else if (navigator.clipboard) {
-      await navigator.clipboard.writeText(text);
-      toastMessage("تم نسخ الفاتورة");
+    const caption = `فاتورة رقم: ${sale.number} - ${state.settings.storeName}`;
+
+    showPdfOverlay();
+    try {
+      const blob = await buildInvoicePdfBlob(sale);
+      const pdfFile = new File([blob], `${sale.number}.pdf`, { type: "application/pdf" });
+
+      if (supportsFileShare(pdfFile)) {
+        await navigator.share({ files: [pdfFile], title: sale.number, text: caption });
+        return;
+      }
+
+      try {
+        const canvas = await renderPreviewToCanvas();
+        const pngFile = await canvasToFile(canvas, `${sale.number}.png`);
+        if (supportsFileShare(pngFile)) {
+          await navigator.share({ files: [pngFile], title: sale.number, text: caption });
+          return;
+        }
+      } catch (err) {
+        console.warn("PNG share unavailable:", err);
+      }
+
+      triggerBlobDownload(blob, `${sale.number}.pdf`);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(caption).catch(() => {});
+      }
+      toastMessage("تم تنزيل نسخة PDF من الفاتورة — شاركها عبر WhatsApp");
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      console.error("Share error:", err);
+      const text = invoiceText(sale);
+      if (navigator.share) {
+        await navigator.share({ title: sale.number, text }).catch(() => {});
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text).catch(() => {});
+        toastMessage("تم نسخ الفاتورة كنص");
+      }
+    } finally {
+      hidePdfOverlay();
     }
+  }
+
+  function supportsFileShare(file) {
+    return typeof navigator.share === "function"
+      && typeof navigator.canShare === "function"
+      && navigator.canShare({ files: [file] });
+  }
+
+  async function buildInvoicePdfBlob(sale) {
+    await loadPdfMakeLibrary();
+    const logo = await resolveLogoForPdf();
+    const doc = await buildInvoiceDoc(sale, logo);
+    return pdfMake.createPdf(doc).getBlob();
+  }
+
+  function loadHtml2CanvasLibrary() {
+    if (window.html2canvas) return Promise.resolve();
+    return loadScriptList([
+      "assets/vendor/html2canvas.min.js",
+      "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
+    ]).then(() => {
+      if (!window.html2canvas) throw new Error("فشل تحميل مكتبة تحويل الفاتورة إلى صورة");
+    });
+  }
+
+  async function renderPreviewToCanvas(scale = 2) {
+    const node = invoicePrintArea.querySelector(".invoice-paper");
+    if (!node) throw new Error("لا توجد معاينة للفاتورة");
+    await loadHtml2CanvasLibrary();
+    await document.fonts.ready;
+    return await html2canvas(node, {
+      scale,
+      useCORS: true,
+      allowTaint: false,
+      logging: false,
+      backgroundColor: "#ffffff"
+    });
+  }
+
+  function canvasToFile(canvas, filename) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (!blob) {
+          reject(new Error("تعذر تحويل المعاينة إلى صورة"));
+          return;
+        }
+        resolve(new File([blob], filename, { type: "image/png" }));
+      }, "image/png");
+    });
   }
 
   async function downloadInvoicePdf() {
@@ -2150,7 +2991,7 @@
     if (confirmBtn) confirmBtn.disabled = count === 0;
   }
 
-  function confirmReturn() {
+  async function confirmReturn() {
     const sale = state.sales.find(item => item.id === state.currentInvoiceId);
     if (!sale) return;
     const returned = returnedQtyByProduct(sale);
@@ -2178,24 +3019,28 @@
       toastMessage("اختر قطعة واحدة على الأقل للإرجاع");
       return;
     }
-    items.forEach(item => {
-      const product = state.products.find(p => p.id === item.productId);
-      if (product) product.quantity = Number(product.quantity || 0) + item.qty;
+    const nextProducts = state.products.map(product => {
+      const returnedQty = items.reduce((sum, item) => sum + (item.productId === product.id ? item.qty : 0), 0);
+      return returnedQty > 0 ? { ...product, quantity: Number(product.quantity || 0) + returnedQty } : product;
     });
-    sale.returns = sale.returns || [];
-    sale.returns.push({
+    const returnRecord = {
       id: cryptoRandomId("r"),
       date: new Date().toISOString(),
       reason: (document.getElementById("returnReason")?.value || "").trim(),
       items,
       qty: count,
       total
-    });
+    };
+    const nextSales = state.sales.map(saleItem => saleItem.id === sale.id ? { ...saleItem, returns: [...(saleItem.returns || []), returnRecord] } : saleItem);
+    if (!commitState({ products: nextProducts, sales: nextSales })) {
+      await showStorageFullDialog();
+      return;
+    }
     state._returnSel = {};
-    saveAll();
     returnDialog.close();
     render();
-    invoicePrintArea.innerHTML = invoiceHtml(sale);
+    const updatedSale = state.sales.find(saleItem => saleItem.id === sale.id);
+    invoicePrintArea.innerHTML = invoiceHtml(updatedSale || sale);
     toastMessage(`تم إرجاع ${count} قطعة بقيمة ${formatMoney(total)} للمخزون`);
   }
 
@@ -2230,16 +3075,20 @@
     );
     if (!ok) return;
     const returned = returnedQtyByProduct(sale);
-    sale.items.forEach(item => {
-      const backQty = Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0));
-      if (backQty <= 0) return;
-      const product = state.products.find(p => p.id === item.productId);
-      if (product) product.quantity = Number(product.quantity || 0) + backQty;
+    const nextProducts = state.products.map(product => {
+      const backQty = sale.items.reduce((sum, item) => {
+        if (item.productId !== product.id) return sum;
+        return sum + Math.max(0, Number(item.qty || 0) - (returned[item.productId] || 0));
+      }, 0);
+      return backQty > 0 ? { ...product, quantity: Number(product.quantity || 0) + backQty } : product;
     });
-    state.sales = state.sales.filter(item => item.id !== sale.id);
+    const nextSales = state.sales.filter(item => item.id !== sale.id);
+    if (!commitState({ products: nextProducts, sales: nextSales })) {
+      await showStorageFullDialog();
+      return;
+    }
     state.currentInvoiceId = null;
     state._returnSel = {};
-    saveAll();
     invoiceDialog.close();
     render();
     toastMessage(`تم حذف فاتورة ${sale.number} وإرجاع الكميات للمخزون`);
@@ -2256,7 +3105,8 @@
       toastMessage("تم تحميل ملف PDF بنجاح");
     } catch (err) {
       console.error("PDF generation error:", err);
-      toastMessage("حدث خطأ أثناء إنشاء ملف PDF");
+      const detail = err && err.message ? err.message : String(err);
+      toastMessage(`حدث خطأ أثناء إنشاء ملف PDF: ${detail}`);
     } finally {
       hidePdfOverlay();
     }
@@ -2327,19 +3177,21 @@
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext("2d");
-    const accent = state.settings.accent || "#0e5349";
     if (shape === "circle") {
       ctx.beginPath();
-      ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      ctx.arc(size / 2, size / 2, size / 2 - 1, 0, Math.PI * 2);
       ctx.closePath();
     } else {
       ctx.beginPath();
-      ctx.rect(0, 0, size, size);
+      ctx.rect(1, 1, size - 2, size - 2);
     }
-    ctx.fillStyle = accent;
+    ctx.fillStyle = "#eef1f4";
     ctx.fill();
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `bold ${Math.floor(size * 0.48)}px Cairo, Arial, sans-serif`;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#dfe4ea";
+    ctx.stroke();
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = `600 ${Math.floor(size * 0.4)}px Cairo, Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText((String(name || "؟").trim().charAt(0) || "؟"), size / 2, size / 2 + size * 0.02);
@@ -2465,6 +3317,111 @@
       footerTextColor: "#6b7280",
       thanksColor: "#9ca3af"
     },
+    boutique: {
+      label: "بوتيك",
+      desc: "فاتورة أنثوية راقية بألوان وردية وخطوط ناعمة",
+      headerStyle: "boutique",
+      logoSize: 56,
+      storeFont: "CairoSemiBold",
+      storeSize: 24,
+      storeColor: "#7f1d4e",
+      subColor: "#9d5a78",
+      ruleColor: "#f0adc8",
+      ruleThickness: 1.8,
+      metaStyle: "rose",
+      metaFill: "rose",
+      metaTitleColor: "#7f1d4e",
+      metaLabelColor: "#9d5a78",
+      metaValueColor: "#331424",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: "#7f1d4e",
+      headerBar: { fill: "#fce7f0", text: "#7f1d4e", font: "CairoSemiBold", size: 9, padding: 6 },
+      tableStripes: true,
+      itemNameFont: "CairoSemiBold",
+      itemNameSize: 9.8,
+      itemMetaColor: "#b87994",
+      totalsStyle: "rose-card",
+      totalsWidth: 250,
+      totalRowColor: "#5b2740",
+      grandStyle: "rose",
+      grandText: "#ffffff",
+      footerRule: "#f4bfd4",
+      footerTextColor: "#8b4664",
+      thanksColor: "#b87994",
+      pdfAccent: "#a21d5d",
+      pdfLight: "#fdf0f5"
+    },
+    atelier: {
+      label: "أتيليه",
+      desc: "تصميم تحريري نظيف مناسب للبراندات الهادئة",
+      headerStyle: "atelier",
+      logoSize: 58,
+      storeFont: "CairoSemiBold",
+      storeSize: 24,
+      storeColor: "#2d2a26",
+      subColor: "#7c7469",
+      ruleColor: "#c6b28d",
+      ruleThickness: 1.4,
+      metaStyle: "sand",
+      metaFill: "sand",
+      metaTitleColor: "#2d2a26",
+      metaLabelColor: "#8b8174",
+      metaValueColor: "#2d2a26",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: "#2d2a26",
+      headerBar: { fill: "#efe8dc", text: "#5d4a2f", font: "CairoSemiBold", size: 9, padding: 6 },
+      tableStripes: false,
+      itemNameFont: "CairoSemiBold",
+      itemNameSize: 9.8,
+      itemMetaColor: "#9b9185",
+      totalsStyle: "sand-card",
+      totalsWidth: 250,
+      totalRowColor: "#4b4238",
+      grandStyle: "sand",
+      grandText: "#ffffff",
+      footerRule: "#ded2bd",
+      footerTextColor: "#7c7469",
+      thanksColor: "#a28b63",
+      pdfAccent: "#6f5630",
+      pdfLight: "#f7f1e7"
+    },
+    runway: {
+      label: "رانواي",
+      desc: "قالب جريء وعصري يبرز الفاتورة كإيصال براند أزياء",
+      headerStyle: "runway",
+      logoSize: 52,
+      storeFont: "CairoSemiBold",
+      storeSize: 25,
+      storeColor: "#ffffff",
+      subColor: "#d7f2eb",
+      ruleColor: "#2dd4bf",
+      ruleThickness: 2,
+      metaStyle: "mint",
+      metaFill: "mint",
+      metaTitleColor: "#0f3d3a",
+      metaLabelColor: "#41817a",
+      metaValueColor: "#102b28",
+      sectionTitleFont: "CairoSemiBold",
+      sectionTitleSize: 12,
+      sectionTitleColor: "#0f766e",
+      headerBar: { fill: "#ccfbf1", text: "#0f766e", font: "CairoSemiBold", size: 9.2, padding: 6 },
+      tableStripes: true,
+      itemNameFont: "CairoSemiBold",
+      itemNameSize: 10,
+      itemMetaColor: "#57928d",
+      totalsStyle: "mint-card",
+      totalsWidth: "full",
+      totalRowColor: "#164e49",
+      grandStyle: "mint",
+      grandText: "#ffffff",
+      footerRule: "#99f6e4",
+      footerTextColor: "#27756f",
+      thanksColor: "#0f766e",
+      pdfAccent: "#0f766e",
+      pdfLight: "#ecfdf9"
+    },
     minimal: {
       label: "بسيط",
       desc: "مساحات بيضاء واسعة وخطوط رفيعة",
@@ -2538,6 +3495,18 @@
     return (color === null || color === undefined) ? accent : color;
   }
 
+  function isDarkHex(hex) {
+    const raw = String(hex || "#ffffff").replace("#", "");
+    const full = raw.length === 3 ? raw.split("").map(c => c + c).join("") : raw;
+    const num = parseInt(full, 16);
+    const r = ((num >> 16) & 255) / 255;
+    const g = ((num >> 8) & 255) / 255;
+    const b = (num & 255) / 255;
+    const lin = v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    return luminance < 0.4;
+  }
+
   async function buildInvoiceDoc(sale, logo) {
     const tpl = INVOICE_TEMPLATES[state.settings.invoiceTemplate] || INVOICE_TEMPLATES.classic;
     return buildInvoiceByTemplate(sale, logo, tpl);
@@ -2551,99 +3520,142 @@
     const compact = returns.length > 0;
     const companyLines = companyInfoLines();
 
+    const pdfAccent = tpl.pdfAccent || accent;
+    const pdfLight = tpl.pdfLight || shadeHex(pdfAccent, 0.92);
+    const headerStyle = tpl.headerStyle || "plain";
+    const metaStyle = tpl.metaStyle || "fill";
+    const totalsStyle = tpl.totalsStyle || "card";
+    const grandStyle = tpl.grandStyle || "accent";
+    const tableStripes = tpl.tableStripes !== false;
+
+    const headerFill = (() => {
+      if (headerStyle === "band" || headerStyle === "runway") return pdfAccent;
+      if (headerStyle === "boutique") return pdfAccent;
+      if (headerStyle === "atelier") return pdfAccent;
+      if (headerStyle === "dark-band") return "#1f1f1f";
+      return shadeHex(pdfAccent, 0.95);
+    })();
+    const headerOnDark = isDarkHex(headerFill);
+
     let qr = null;
-    try {
-      qr = await qrDataUrl(invoiceQrText(sale), 220);
-    } catch (err) {
-      console.warn("QR skipped:", err);
+    if (state.settings.showInvoiceQr !== false) {
+      try {
+        qr = await qrDataUrl(invoiceQrText(sale), 220);
+      } catch (err) {
+        console.warn("QR skipped:", err);
+      }
     }
 
-    // ---- Brand header (right) + document title (left)
     const brandStack = [];
-    if (logo) brandStack.push({ image: logo, width: compact ? 42 : 54, alignment: "center", margin: [0, 0, 0, compact ? 2 : 5] });
-    brandStack.push({ text: state.settings.storeName, fontSize: compact ? 14 : 18, bold: true, font: "CairoSemiBold", color: accent, alignment: "center" });
-    brandStack.push({ text: "متجر ملابس وأزياء", fontSize: 9, color: "#64748B", alignment: "center", margin: [0, compact ? 1 : 2, 0, 0] });
+    const storeColor = headerOnDark
+      ? (tpl.storeColor && !isDarkHex(tpl.storeColor) ? tpl.storeColor : "#ffffff")
+      : pdfColor(tpl.storeColor, accent);
+    const subColor = headerOnDark ? "#d7e0de" : pdfColor(tpl.subColor, "#64748B");
+    const docTitleColor = headerOnDark ? "#ffffff" : pdfColor(tpl.sectionTitleColor, accent);
+    const docNumberColor = headerOnDark ? "#ffffff" : "#1F2937";
+    const docMetaColor = headerOnDark ? "#d7e0de" : "#64748B";
+    if (logo) brandStack.push({ image: logo, width: compact ? 38 : Math.min(tpl.logoSize || 54, 44), alignment: "center", margin: [0, 0, 0, compact ? 1 : 3] });
+    brandStack.push({ text: state.settings.storeName, fontSize: compact ? 13 : Math.min(tpl.storeSize || 18, 20), bold: true, font: tpl.storeFont || "CairoSemiBold", color: storeColor, alignment: "center" });
+    brandStack.push({ text: "متجر ملابس وأزياء", fontSize: 8.5, color: subColor, alignment: "center", margin: [0, compact ? 1 : 2, 0, 0] });
 
     const docTitleStack = [
-      { text: "فاتورة مبيعات", fontSize: compact ? 14 : 19, bold: true, font: "CairoSemiBold", color: accent, alignment: "left" },
-      { text: sale.number, fontSize: compact ? 10 : 12, bold: true, color: "#1F2937", alignment: "left", margin: [0, compact ? 2 : 3, 0, 0] },
-      { text: dateTime(sale.date), fontSize: 8.5, color: "#64748B", alignment: "left", margin: [0, compact ? 1 : 2, 0, 0] },
-      ...(sale.paymentMethod ? [{ text: `طريقة الدفع: ${sale.paymentMethod}`, fontSize: 8.5, color: "#64748B", alignment: "left", margin: [0, compact ? 1 : 2, 0, 0] }] : [])
+      { text: "فاتورة مبيعات", fontSize: compact ? 13 : (tpl.sectionTitleSize || 19), bold: true, font: tpl.sectionTitleFont || "CairoSemiBold", color: docTitleColor, alignment: "left" },
+      { text: sale.number, fontSize: compact ? 9.5 : 11, bold: true, color: docNumberColor, alignment: "left", margin: [0, compact ? 1 : 2, 0, 0] },
+      { text: dateTime(sale.date), fontSize: 8, color: docMetaColor, alignment: "left", margin: [0, compact ? 1 : 1.5, 0, 0] },
+      ...(sale.paymentMethod ? [{ text: `طريقة الدفع: ${sale.paymentMethod}`, fontSize: 8, color: docMetaColor, alignment: "left", margin: [0, compact ? 1 : 1.5, 0, 0] }] : [])
     ];
 
     const header = {
       layout: {
         defaultBorder: false,
-        paddingLeft: () => 14,
-        paddingRight: () => 14,
-        paddingTop: () => (compact ? 7 : 10),
-        paddingBottom: () => (compact ? 7 : 10)
+        paddingLeft: () => 12,
+        paddingRight: () => 12,
+        paddingTop: () => (compact ? 5 : 7),
+        paddingBottom: () => (compact ? 5 : 7)
       },
-      table: { headerRows: 0, widths: ["*"], body: [[{ columns: [docTitleStack, brandStack], columnGap: 8, fillColor: shadeHex(accent, 0.95) }]] },
-      margin: [0, 0, 0, compact ? 4 : 8]
+      table: { headerRows: 0, widths: ["*"], body: [[{ columns: [docTitleStack, brandStack], columnGap: 8, fillColor: headerFill }]] },
+      margin: [0, 0, 0, compact ? 4 : 6]
     };
-    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: 1.2, lineColor: accent }], margin: [0, 0, 0, compact ? 4 : 8] };
+    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: 523, y2: 0, lineWidth: tpl.ruleThickness || 1.2, lineColor: pdfColor(tpl.ruleColor, accent) }], margin: [0, 0, 0, compact ? 3 : 5] };
 
-    // ---- Info cards
+    const metaTitleColor = pdfColor(tpl.metaTitleColor, accent);
+    const metaLabelColor = pdfColor(tpl.metaLabelColor, "#64748B");
+    const metaValueColor = pdfColor(tpl.metaValueColor, "#1F2937");
+
+    const metaCardFill = (() => {
+      if (metaStyle === "border") return "#fff";
+      if (metaStyle === "rose") return tpl.pdfLight || "#fdf0f5";
+      if (metaStyle === "sand") return tpl.pdfLight || "#f7f1e7";
+      if (metaStyle === "mint") return tpl.pdfLight || "#ecfdf9";
+      if (metaStyle === "gold") return null;
+      if (metaStyle === "plain") return null;
+      return "#F8FAFC";
+    })();
+
+    const metaBorderColor = (() => {
+      if (metaStyle === "rose") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#f4bfd4";
+      if (metaStyle === "sand") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#ded2bd";
+      if (metaStyle === "mint") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#99f6e4";
+      if (metaStyle === "gold") return tpl.gold || "#b08d57";
+      if (metaStyle === "plain") return "#ffffff";
+      return "#E5E7EB";
+    })();
+
     const infoSection = {
       columns: [
         { width: "*", ...pdfSoftCard([
-          { text: "بيانات الفاتورة", fontSize: compact ? 9 : 10.5, bold: true, font: "CairoSemiBold", color: accent, margin: [0, 0, 0, compact ? 3 : 5] },
+          { text: "بيانات الفاتورة", fontSize: compact ? 8.5 : 10, bold: true, font: "CairoSemiBold", color: metaTitleColor, margin: [0, 0, 0, compact ? 2 : 4] },
           ...[
             ["التاريخ", dateTime(sale.date)],
             ["طريقة الدفع", sale.paymentMethod || "نقدا"],
             ["عدد القطع", `${pieceCount} قطعة`]
-          ].map(row => pdfInfoRow(row[0], row[1], compact))
-        ], compact) },
+          ].map(row => pdfInfoRow(row[0], row[1], compact, metaTitleColor, metaLabelColor, metaValueColor))
+        ], compact, metaCardFill, metaBorderColor, compact ? 8 : 10) },
         { width: "*", ...pdfSoftCard([
-          { text: "بيانات العميل", fontSize: compact ? 9 : 10.5, bold: true, font: "CairoSemiBold", color: accent, margin: [0, 0, 0, compact ? 3 : 5] },
+          { text: "بيانات العميل", fontSize: compact ? 8.5 : 10, bold: true, font: "CairoSemiBold", color: metaTitleColor, margin: [0, 0, 0, compact ? 2 : 4] },
           ...[
             ["الاسم", sale.customerName || "عميل نقدي"],
             ["الهاتف", sale.customerPhone || "—"]
-          ].map(row => pdfInfoRow(row[0], row[1], compact))
-        ], compact) }
+          ].map(row => pdfInfoRow(row[0], row[1], compact, metaTitleColor, metaLabelColor, metaValueColor))
+        ], compact, metaCardFill, metaBorderColor, compact ? 8 : 10) }
       ],
       columnGap: 8,
-      margin: [0, compact ? 2 : 6, 0, compact ? 2 : 8]
+      margin: [0, compact ? 2 : 4, 0, compact ? 2 : 5]
     };
 
-    // ---- Items table (numbered, soft borders, product thumbnails)
+    const itemsHeaderColor = pdfColor(tpl.sectionTitleColor, accent);
     const itemThumbs = await Promise.all(sale.items.map(item => {
-      const product = state.products.find(p => p.id === item.productId);
-      return resolveThumbForPdf(product ? product.image : "", compact ? 24 : 30, product ? product.name : item.name);
+      return resolveThumbForPdf(saleItemImage(item), compact ? 20 : 24, item.name);
     }));
-    const thumbSize = compact ? 24 : 28;
+    const thumbSize = compact ? 20 : 24;
     const itemsBody = [
-      pdfItemsHeader(["الإجمالي", "السعر", "الكمية", "الصنف", "صورة", "#"], accent, compact),
+      pdfItemsHeader(["الإجمالي", "السعر", "الكمية", "الصنف", "صورة", "#"], itemsHeaderColor, compact),
       ...sale.items.map((item, index) => {
-        const product = state.products.find(p => p.id === item.productId);
-        const sku = product ? product.sku : (item.sku || "");
-        const size = product ? product.size : "";
-        const metaLine = [sku, size].filter(Boolean).join(" · ");
+        const metaLine = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
         return [
-          { text: pdfMoneyParts(item.total, { bold: true }), alignment: "center", margin: [2, 2, 2, 2] },
-          { text: pdfMoneyParts(item.price), alignment: "center", margin: [2, 2, 2, 2] },
-          { text: `${item.qty}`, alignment: "center", bold: true, fontSize: 9.5, margin: [2, 2, 2, 2] },
+          { text: pdfMoneyParts(item.total, { bold: true, size: compact ? 7.5 : 8.5 }), alignment: "left", margin: [2, 2, 2, 2] },
+          { text: pdfMoneyParts(item.price, { bold: false, size: compact ? 7.5 : 8.5 }), alignment: "left", margin: [2, 2, 2, 2] },
+          { text: `${item.qty}`, alignment: "center", bold: true, fontSize: compact ? 8 : 9, margin: [2, 2, 2, 2] },
           {
             stack: [
-              { text: item.name, bold: true, fontSize: 9.5, font: "Cairo", color: "#1F2937", lineHeight: 1.2 },
-              { text: metaLine, fontSize: 7.5, color: "#94A3B8", margin: compact ? [0, 1, 0, 0] : [0, 2, 0, 0] }
+              { text: item.name, bold: true, fontSize: compact ? 8.5 : (tpl.itemNameSize || 9.5), font: tpl.itemNameFont || "Cairo", color: "#1F2937", lineHeight: 0.8 },
+              { text: metaLine, fontSize: compact ? 6.5 : 7, color: pdfColor(tpl.itemMetaColor, "#94A3B8"), margin: compact ? [0, 1, 0, 0] : [0, 1.5, 0, 0] }
             ],
             alignment: "right",
             margin: [2, 2, 2, 2]
           },
           { image: itemThumbs[index], width: thumbSize, height: thumbSize, alignment: "center", margin: [2, 2, 2, 2] },
-          { text: String(index + 1), alignment: "center", bold: true, color: "#64748B", fontSize: 9, margin: [2, 2, 2, 2] }
+          { text: String(index + 1), alignment: "center", bold: true, color: "#64748B", fontSize: compact ? 8 : 9, margin: [2, 2, 2, 2] }
         ];
       })
     ];
 
-    const itemsTable = pdfTable(itemsBody, [64, 56, 30, "*", 30, 20], {
-      layout: pdfItemsLayout(accent, compact),
+    const stripeLineColor = pdfColor(tpl.ruleColor, "#E5E7EB");
+    const itemsTable = pdfTable(itemsBody, [68, 56, 46, "*", 36, 22], {
+      layout: pdfItemsLayout(pdfAccent, compact, tableStripes, stripeLineColor),
       headerRows: 1
     });
 
-    // ---- Totals + amount in words + QR
     const totalRows = [
       ["المجموع الفرعي", sale.subtotal],
       ["الخصم", sale.discount],
@@ -2651,64 +3663,129 @@
       ...(sale.shipping ? [["مصاريف الشحن", sale.shipping]] : [])
     ];
     const returnRow = net.returnAmount > 0
-      ? [
-        { text: pdfMoneyParts(-net.returnAmount, { color: "#B91C1C", bold: true }), alignment: "left", margin: [6, 4, 6, 4] },
-        { text: "المجموع المرتجع", color: "#B91C1C", bold: true, fontSize: 9, alignment: "right", margin: [6, 4, 6, 4] }
-      ]
+      ? { columns: [
+          { text: `- ${moneyFormatter.format(Number(net.returnAmount || 0))} ${state.settings.currency || ""}`, color: "#B91C1C", bold: true, fontSize: compact ? 8 : 8.5, alignment: "left", width: "auto" },
+          { text: "المجموع المرتجع", color: "#B91C1C", bold: true, fontSize: compact ? 8 : 8.5, alignment: "right", width: "*" }
+        ], margin: [0, 2.5, 0, 2.5] }
       : null;
 
-    const totalsInner = {
-      layout: "noBorders",
+    const totalsCardFill = (() => {
+      if (totalsStyle === "plain" || totalsStyle === "plain-gold") return null;
+      if (totalsStyle === "rose-card") return tpl.pdfLight || "#fdf0f5";
+      if (totalsStyle === "sand-card") return tpl.pdfLight || "#f7f1e7";
+      if (totalsStyle === "mint-card") return tpl.pdfLight || "#ecfdf9";
+      return "#fff";
+    })();
+
+    const totalsCardBorder = (() => {
+      if (totalsStyle === "plain" || totalsStyle === "plain-gold") return "#ffffff";
+      if (totalsStyle === "rose-card") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.5) : "#f4bfd4";
+      if (totalsStyle === "sand-card") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.5) : "#ded2bd";
+      if (totalsStyle === "mint-card") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.5) : "#99f6e4";
+      return "#E5E7EB";
+    })();
+
+    const grandBg = (() => {
+      if (grandStyle === "accent") return pdfAccent;
+      if (grandStyle === "rose") return "#7f1d4e";
+      if (grandStyle === "sand") return "#4b4238";
+      if (grandStyle === "mint") return "#164e49";
+      if (grandStyle === "gold") return tpl.gold || "#55504a";
+      return null;
+    })();
+
+    const grandText = (() => {
+      if (grandStyle === "text") return pdfAccent;
+      if (grandBg && !isDarkHex(grandBg)) return "#111827";
+      return tpl.grandText || "#ffffff";
+    })();
+
+    const moneyString = (value, opts = {}) => {
+      const parts = [];
+      parts.push({ text: moneyFormatter.format(Number(value || 0)), bold: opts.bold !== false, color: opts.color || "#111827", fontSize: opts.size || 9 });
+      parts.push({ text: ` ${state.settings.currency || ""}`, bold: false, color: opts.currencyColor || "#6b7280", fontSize: Math.max(6, (opts.size || 9) - 1.5) });
+      return parts;
+    };
+
+    const grandRowInCard = {
+      columns: [
+        { text: moneyString(net.total, { size: compact ? 9.5 : 10.5, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [6, 0, 6, 0] },
+        { text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 9.5 : 10.5, alignment: "right", width: "*", margin: [6, 0, 6, 0] }
+      ],
+      margin: [0, compact ? 3 : 4, 0, 0]
+    };
+
+    const grandBarNode = grandBg ? {
       table: {
         headerRows: 0,
-        widths: [130, "*"],
-        body: [
-          ...totalRows.map(row => [
-            { text: pdfMoneyParts(row[1], { color: "#1F2937" }), alignment: "left", margin: [6, 4, 6, 4] },
-            { text: row[0], color: "#64748B", fontSize: 9, alignment: "right", margin: [6, 4, 6, 4] }
-          ]),
-          ...(returnRow ? [returnRow] : []),
-          [
-            { text: pdfMoneyParts(net.total, { color: "#ffffff", currencyColor: "#d7e0dd", size: 11 }), alignment: "left", bold: true, fillColor: accent, margin: [8, 7, 8, 7] },
-            { text: "الإجمالي النهائي", bold: true, color: "#ffffff", fillColor: accent, font: "CairoSemiBold", fontSize: 11, alignment: "right", margin: [8, 7, 8, 7] }
+        widths: ["*"],
+        body: [[{
+          columns: [
+            { text: moneyString(net.total, { size: compact ? 9.5 : 10.5, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [8, 0, 8, 0] },
+            { text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 9.5 : 10.5, alignment: "right", width: "*", margin: [8, 0, 8, 0] }
           ],
-          [
-            { text: "المبلغ بالحروف", color: "#64748B", fontSize: 8, margin: [6, 8, 6, 0], colSpan: 2 },
-            ""
-          ],
-          [
-            { text: amountInWords(net.total), bold: true, color: "#1F2937", fontSize: 8.5, margin: [6, 2, 6, 8], colSpan: 2 },
-            ""
-          ]
-        ]
+          fillColor: grandBg
+        }]]
+      },
+      layout: {
+        defaultBorder: false,
+        paddingLeft: () => 4,
+        paddingRight: () => 4,
+        paddingTop: () => (compact ? 4 : 5),
+        paddingBottom: () => (compact ? 4 : 5)
+      },
+      margin: [0, compact ? 3 : 4, 0, 0]
+    } : null;
+
+    const totalsStack = [
+      ...totalRows.map(row => ({
+        columns: [
+          { text: moneyString(row[1], { size: compact ? 8 : 9, color: row[0] === "الخصم" && row[1] > 0 ? "#B91C1C" : "#111827" }), alignment: "left", width: "auto", margin: [6, 0, 6, 0] },
+          { text: row[0], color: "#4b5563", fontSize: compact ? 8 : 8.5, alignment: "right", width: "*", margin: [6, 0, 6, 0] }
+        ],
+        margin: [0, compact ? 1.5 : 2, 0, compact ? 1.5 : 2]
+      })),
+      ...(returnRow ? [returnRow] : []),
+      ...(grandBg ? [] : [grandRowInCard]),
+      {
+        columns: [
+          { text: amountInWords(net.total), bold: true, color: "#1F2937", fontSize: compact ? 7.5 : 8, alignment: "left", width: "*", lineHeight: 0.8 },
+          { text: "المبلغ بالحروف", color: "#4b5563", fontSize: compact ? 7 : 7.5, alignment: "right", width: "auto" }
+        ],
+        margin: [6, compact ? 3 : 4, 6, 0]
       }
-    };
+    ];
 
     const totalsNode = {
       unbreakable: true,
       columns: [
         ...(qr ? [{
-          width: compact ? 82 : 104,
+          width: compact ? 72 : 88,
           stack: [
-            { image: qr, width: compact ? 66 : 88, height: compact ? 66 : 88, alignment: "center" },
-            { text: "امسح للتحقق", fontSize: 7, color: "#64748B", alignment: "center", margin: [0, 4, 0, 0] }
+            { image: qr, width: compact ? 58 : 72, height: compact ? 58 : 72, alignment: "center" },
+            { text: "امسح للتحقق", fontSize: 7, color: "#64748B", alignment: "center", margin: [0, 3, 0, 0] }
           ],
           alignment: "center"
         }] : []),
-        { width: "*", ...pdfSoftCard([totalsInner], compact) }
+        {
+          width: "*",
+          stack: [
+            pdfSoftCard(totalsStack, compact, totalsCardFill, totalsCardBorder, compact ? 8 : 10),
+            ...(grandBarNode ? [grandBarNode] : [])
+          ]
+        }
       ],
       columnGap: 10,
-      margin: [0, compact ? 5 : 10, 0, 0]
+      margin: [0, compact ? 4 : 6, 0, 0]
     };
 
-    // ---- Returns section
+    const retHeaderFill = tpl.pdfLight || "#FEE2E2";
     const pdfReturnsBlock = () => {
       const rows = [];
       returns.forEach(ret => {
         const reason = (ret.reason || "").trim();
         rows.push([
-          { text: `مرتجع — ${dateTime(ret.date)}${reason ? `  |  السبب: ${reason}` : ""}`, fontSize: 8, bold: true, color: "#B91C1C", colSpan: 4, fillColor: "#FEE2E2", margin: [6, 2, 6, 2] },
-          "", "", ""
+          { text: `مرتجع — ${dateTime(ret.date)}${reason ? `  |  السبب: ${reason}` : ""}`, fontSize: 8, bold: true, color: "#B91C1C", colSpan: 4, fillColor: retHeaderFill, margin: [6, 2, 6, 2] }
         ]);
         ret.items.forEach(item => {
           rows.push([
@@ -2719,9 +3796,9 @@
           ]);
         });
       });
-      const retHeader = (label) => ({ text: label, bold: true, color: "#B91C1C", fillColor: "#FEE2E2", alignment: "center", fontSize: 8, margin: [4, 3, 4, 3] });
+      const retHeader = (label) => ({ text: label, bold: true, color: "#B91C1C", fillColor: retHeaderFill, alignment: "center", fontSize: 8, margin: [4, 3, 4, 3] });
       const retLayout = {
-        ...pdfTableLayoutPlain(),
+        ...pdfTableLayoutPlain(stripeLineColor),
         paddingTop: () => 1,
         paddingBottom: () => 1,
         hLineWidth: () => 0.3
@@ -2729,7 +3806,7 @@
       return {
         unbreakable: true,
         stack: [
-          { text: "المرتجعات", fontSize: compact ? 9 : 11, bold: true, font: "CairoSemiBold", color: "#B91C1C", margin: compact ? [0, 2, 0, 2] : [0, 4, 0, 4] },
+          { text: "المرتجعات", fontSize: compact ? 8.5 : 10, bold: true, font: "CairoSemiBold", color: "#B91C1C", margin: compact ? [0, 1, 0, 1] : [0, 3, 0, 3] },
           pdfTable([
             [retHeader("الإجمالي"), retHeader("السعر"), retHeader("الكمية"), retHeader("الصنف")],
             ...rows
@@ -2738,20 +3815,21 @@
       };
     };
 
-    const sectionTitle = (text, color) => ({
+    const sectionTitleColor = pdfColor(tpl.sectionTitleColor, accent);
+    const sectionTitle = (text) => ({
       text,
-      fontSize: compact ? 9.5 : 11.5,
+      fontSize: compact ? 9 : (tpl.sectionTitleSize || 11),
       bold: true,
-      font: "CairoSemiBold",
-      color: color || accent,
-      margin: [0, compact ? 2 : 4, 0, compact ? 2 : 4]
+      font: tpl.sectionTitleFont || "CairoSemiBold",
+      color: sectionTitleColor,
+      margin: [0, compact ? 2 : 3, 0, compact ? 2 : 3]
     });
 
     return {
       rtl: true,
       pageSize: "A4",
-      pageMargins: compact ? [12, 24, 12, 60] : [16, 26, 16, 64],
-      defaultStyle: { font: "Cairo", fontSize: 9.5 },
+      pageMargins: compact ? [10, 14, 10, 46] : [14, 16, 14, 52],
+      defaultStyle: { font: "Cairo", fontSize: 9.5, lineHeight: 0.72 },
       content: [
         header,
         headerRule,
@@ -2773,10 +3851,10 @@
       },
       footer: (currentPage, pageCount) => ({
         stack: [
-          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: "#E5E7EB" }] },
-          ...(companyLines.length ? [{ text: companyLines.join("   |   "), alignment: "center", fontSize: 7.5, color: "#64748B", margin: [0, 4, 0, 0] }] : []),
-          ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, alignment: "center", fontSize: 7.5, color: "#94A3B8", margin: [0, 2, 0, 0] }] : []),
-          { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 7.5, color: "#94A3B8", margin: [0, 2, 0, 0] }
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: tpl.footerRule || "#E5E7EB" }] },
+          ...(companyLines.length ? [{ text: companyLines.join("   |   "), alignment: "center", fontSize: 7.5, color: pdfColor(tpl.footerTextColor, "#64748B"), margin: [0, 4, 0, 0] }] : []),
+          ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, alignment: "center", fontSize: 7.5, color: pdfColor(tpl.thanksColor, "#94A3B8"), margin: [0, 2, 0, 0] }] : []),
+          { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 7.5, color: pdfColor(tpl.footerTextColor, "#94A3B8"), margin: [0, 2, 0, 0] }
         ],
         margin: [compact ? 12 : 16, 6, compact ? 12 : 16, 0]
       }),
@@ -2803,10 +3881,12 @@
     });
 
     let qr = null;
-    try {
-      qr = await qrDataUrl(invoiceQrText(sale), 180);
-    } catch (err) {
-      console.warn("QR skipped:", err);
+    if (state.settings.showInvoiceQr !== false) {
+      try {
+        qr = await qrDataUrl(invoiceQrText(sale), 180);
+      } catch (err) {
+        console.warn("QR skipped:", err);
+      }
     }
 
     const rule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: W - M * 2, y2: 0, lineWidth: 0.7, lineColor: "#CBD5E1" }], margin: [0, 4, 0, 4] };
@@ -2829,8 +3909,7 @@
         { text: "#", bold: true, color: accent, fontSize: 8, alignment: "center" }
       ],
       ...sale.items.map((item, index) => {
-        const product = state.products.find(p => p.id === item.productId);
-        const metaLine = [product ? product.sku : (item.sku || ""), product ? product.size : ""].filter(Boolean).join(" · ");
+        const metaLine = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
         return [
           { ...moneyText(item.total, { size: 8, bold: true }), alignment: "left" },
           { text: moneyText(item.price, { size: 8 }).text, fontSize: 8, alignment: "center" },
@@ -2856,7 +3935,7 @@
         paddingTop: () => 2.5,
         paddingBottom: () => 2.5
       },
-      table: { headerRows: 1, widths: [52, 44, 20, "*", 14], body: itemRows },
+      table: { headerRows: 1, widths: [50, 42, 28, "*", 14], body: itemRows },
       margin: [0, 2, 0, 0]
     };
 
@@ -2889,7 +3968,7 @@
       },
       {
         columns: [
-          { text: amountInWords(net.total), fontSize: 8, color: "#1F2937", alignment: "left", width: "*", lineHeight: 1.4 },
+          { text: amountInWords(net.total), fontSize: 8, color: "#1F2937", alignment: "left", width: "*", lineHeight: 0.8 },
           { text: "المبلغ بالحروف", color: "#64748B", fontSize: 8, alignment: "right", width: "auto" }
         ],
         margin: [0, 4, 0, 0]
@@ -2964,31 +4043,33 @@
     };
   }
 
-  function pdfInfoRow(label, value, compact) {
+  function pdfInfoRow(label, value, compact, titleColor, labelColor, valueColor) {
     return {
       columns: [
-        { text: String(value), bold: true, font: "CairoSemiBold", fontSize: 9.5, color: "#1F2937", alignment: "left", width: "auto" },
-        { text: label, color: "#64748B", fontSize: 8.5, alignment: "right", width: "*" }
+        { text: String(value), bold: true, font: "CairoSemiBold", fontSize: compact ? 8.5 : 9, color: valueColor || "#1F2937", alignment: "left", width: "auto" },
+        { text: label, color: labelColor || "#4b5563", fontSize: compact ? 8 : 8.5, alignment: "right", width: "*" }
       ],
-      margin: [0, compact ? 1 : 2, 0, compact ? 1 : 2]
+      margin: [0, compact ? 1 : 1.5, 0, compact ? 1 : 1.5]
     };
   }
 
-  function pdfSoftCard(stack, compact) {
-    const pad = compact ? 10 : 14;
+  function pdfSoftCard(stack, compact, fill, borderColor, pad) {
+    const padValue = pad || (compact ? 8 : 10);
+    const cardFill = fill || "#F8FAFC";
+    const lineColor = borderColor || "#E5E7EB";
     return {
       layout: {
         defaultBorder: false,
         hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.6 : 0,
-        hLineColor: () => "#E5E7EB",
+        hLineColor: () => lineColor,
         vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length) ? 0.6 : 0,
-        vLineColor: () => "#E5E7EB",
-        paddingLeft: () => pad,
-        paddingRight: () => pad,
-        paddingTop: () => (compact ? 6 : 9),
-        paddingBottom: () => (compact ? 6 : 9)
+        vLineColor: () => lineColor,
+        paddingLeft: () => padValue,
+        paddingRight: () => padValue,
+        paddingTop: () => (compact ? 5 : 7),
+        paddingBottom: () => (compact ? 5 : 7)
       },
-      table: { headerRows: 0, widths: ["*"], body: [[{ stack, fillColor: "#F8FAFC" }]] }
+      table: { headerRows: 0, widths: ["*"], body: [[{ stack, fillColor: cardFill }]] }
     };
   }
 
@@ -2999,22 +4080,37 @@
       font: "CairoSemiBold",
       color: accent,
       alignment: "center",
-      fontSize: compact ? 8 : 9,
-      margin: [4, compact ? 3 : 6, 4, compact ? 3 : 6]
+      noWrap: true,
+      fontSize: compact ? 7.5 : 8.5,
+      margin: [3, compact ? 3 : 4, 3, compact ? 3 : 4]
     }));
   }
 
-  function pdfItemsLayout(accent, compact) {
+  function pdfItemsLayout(accent, compact, stripes, stripeColor) {
+    const useStripes = stripes !== false;
+    const sColor = stripeColor || "#E5E7EB";
     return {
       defaultBorder: false,
-      hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.7 : 0.35,
-      hLineColor: () => "#E5E7EB",
+      hLineWidth: (i, node) => {
+        if (i === 0) return 0.7;
+        if (i === 1) return 1;
+        if (i === node.table.body.length) return 0.7;
+        return 0.35;
+      },
+      hLineColor: (i, node) => {
+        if (i === 1) return accent;
+        return sColor;
+      },
       vLineWidth: () => 0,
-      paddingLeft: () => 6,
-      paddingRight: () => 6,
-      paddingTop: () => (compact ? 4 : 6),
-      paddingBottom: () => (compact ? 4 : 6),
-      fillColor: rowIndex => (rowIndex === 0) ? shadeHex(accent, 0.95) : null
+      paddingLeft: () => 5,
+      paddingRight: () => 5,
+      paddingTop: () => (compact ? 3 : 4.5),
+      paddingBottom: () => (compact ? 3 : 4.5),
+      fillColor: (rowIndex) => {
+        if (rowIndex === 0) return shadeHex(accent, 0.85);
+        if (useStripes && rowIndex % 2 === 0) return "#f9fafb";
+        return null;
+      }
     };
   }
 
@@ -3043,40 +4139,55 @@
   }
 
   async function buildReportDoc(type, logo) {
-    const accent = state.settings.accent || "#0e5349";
+    const accent = docAccent();
     const light = shadeHex(accent, 0.92);
     const typeInfo = reportTypes.find(t => t.id === type) || reportTypes[0];
     const filterSummary = reportFilterSummary();
+    const companyLines = companyInfoLines();
 
-    const header = { stack: [], margin: [0, 0, 0, 4] };
-    if (logo) header.stack.push({ image: logo, width: 44, alignment: "center", margin: [0, 0, 0, 4] });
-    header.stack.push({ text: state.settings.storeName, fontSize: 19, bold: true, color: accent, alignment: "center" });
-    header.stack.push({ text: typeInfo.label, fontSize: 13, bold: true, alignment: "center", margin: [0, 3, 0, 0] });
-    header.stack.push({
-      text: `الفترة: ${reportPeriodLabel()}${filterSummary ? `  |  ${filterSummary}` : ""}`,
-      fontSize: 8.5,
-      color: "#6b7280",
-      alignment: "center",
-      margin: [0, 4, 0, 0]
-    });
-    header.stack.push(pdfAccentRule(accent, 2.2));
+    const brandStack = [];
+    if (logo) brandStack.push({ image: logo, width: 44, alignment: "center", margin: [0, 0, 0, 3] });
+    brandStack.push({ text: state.settings.storeName, fontSize: 17, bold: true, font: "CairoSemiBold", color: accent, alignment: "center" });
+    brandStack.push({ text: "متجر ملابس وأزياء", fontSize: 8.5, color: "#64748B", alignment: "center", margin: [0, 1, 0, 0] });
+
+    const docTitleStack = [
+      { text: typeInfo.label, fontSize: 18, bold: true, font: "CairoSemiBold", color: accent, alignment: "left" },
+      { text: `الفترة: ${reportPeriodLabel()}`, fontSize: 9.5, bold: true, color: "#1F2937", alignment: "left", margin: [0, 3, 0, 0] },
+      ...(filterSummary ? [{ text: filterSummary, fontSize: 8.5, color: "#64748B", alignment: "left", margin: [0, 2, 0, 0] }] : [])
+    ];
+
+    const header = {
+      layout: {
+        defaultBorder: false,
+        paddingLeft: () => 14,
+        paddingRight: () => 14,
+        paddingTop: () => 10,
+        paddingBottom: () => 10
+      },
+      table: { headerRows: 0, widths: ["*"], body: [[{ columns: [docTitleStack, brandStack], columnGap: 12, fillColor: shadeHex(accent, 0.95) }]] },
+      margin: [0, 0, 0, 6]
+    };
+    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: 818, y2: 0, lineWidth: 1.2, lineColor: accent }], margin: [0, 0, 0, 6] };
 
     return {
       rtl: true,
       pageSize: "A4",
       pageOrientation: "landscape",
-      pageMargins: [12, 12, 12, 16],
+      pageMargins: [12, 12, 12, 22],
       defaultStyle: { font: "Cairo", fontSize: 9 },
       content: [
         header,
+        headerRule,
         ...await buildReportSections(type, accent, light)
       ],
-      footer: currentPage => ({
-        text: `${state.settings.storeName} — تم الإنشاء ${new Intl.DateTimeFormat("ar-EG-u-nu-latn", { dateStyle: "medium" }).format(new Date())} — صفحة ${currentPage}`,
-        alignment: "center",
-        fontSize: 8,
-        color: "#9ca3af",
-        margin: [0, 6, 0, 0]
+      footer: (currentPage, pageCount) => ({
+        stack: [
+          { canvas: [{ type: "line", x1: 0, y1: 0, x2: 818, y2: 0, lineWidth: 0.5, lineColor: "#E5E7EB" }] },
+          { text: `${state.settings.storeName} — تم الإنشاء ${new Intl.DateTimeFormat("ar-EG-u-nu-latn", { dateStyle: "medium" }).format(new Date())}`, alignment: "center", fontSize: 8, color: "#94A3B8", margin: [0, 4, 0, 0] },
+          ...(companyLines.length ? [{ text: companyLines.join("   |   "), alignment: "center", fontSize: 7.5, color: "#64748B", margin: [0, 2, 0, 0] }] : []),
+          { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 8, color: "#94A3B8", margin: [0, 2, 0, 0] }
+        ],
+        margin: [12, 6, 12, 0]
       }),
       info: {
         title: `${typeInfo.label} - ${state.settings.storeName}`,
@@ -3117,43 +4228,52 @@
     return parts.join(" | ");
   }
 
-  function pdfTableLayout() {
+  function pdfTableLayout(accent) {
+    const a = accent || docAccent();
     return {
       defaultBorder: false,
-      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.5,
+      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0.7 : 0.4,
       hLineColor: () => "#E5E7EB",
       vLineWidth: () => 0,
       paddingLeft: () => 6,
       paddingRight: () => 6,
       paddingTop: () => 7,
       paddingBottom: () => 7,
-      fillColor: rowIndex => (rowIndex % 2 === 1) ? "#F7F8FA" : null
+      fillColor: (rowIndex, node) => {
+        if (node.table.headerRows && rowIndex < node.table.headerRows) return shadeHex(a, 0.85);
+        return (rowIndex % 2 === 1) ? "#F7F8FA" : null;
+      }
     };
   }
 
   function pdfDangerLayout() {
     return {
       defaultBorder: false,
-      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.5,
+      hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0.7 : 0.4,
       hLineColor: () => "#F5CBCB",
       vLineWidth: () => 0,
       paddingLeft: () => 6,
       paddingRight: () => 6,
       paddingTop: () => 7,
       paddingBottom: () => 7,
-      fillColor: rowIndex => (rowIndex % 2 === 1) ? "#FEF2F2" : null
+      fillColor: (rowIndex, node) => {
+        if (node.table.headerRows && rowIndex < node.table.headerRows) return "#FEE2E2";
+        return (rowIndex % 2 === 1) ? "#FEF2F2" : null;
+      }
     };
   }
 
   function pdfHeaderRow(labels, accent, fontSize = 8.5) {
+    const a = accent || docAccent();
     return labels.map(label => ({
       text: label,
       bold: true,
-      color: "#ffffff",
-      fillColor: accent,
+      font: "CairoSemiBold",
+      color: a,
       alignment: "center",
+      noWrap: true,
       fontSize,
-      margin: [4, 5, 4, 5]
+      margin: [4, 6, 4, 6]
     }));
   }
 
@@ -3175,11 +4295,12 @@
     }));
   }
 
-  function pdfTableLayoutPlain() {
+  function pdfTableLayoutPlain(lineColor) {
+    const lc = lineColor || "#E5E7EB";
     return {
       defaultBorder: false,
       hLineWidth: (i, node) => (node.table.headerRows && i === 0) ? 0 : 0.4,
-      hLineColor: () => "#E5E7EB",
+      hLineColor: () => lc,
       vLineWidth: () => 0,
       paddingLeft: () => 8,
       paddingRight: () => 8,
@@ -3193,11 +4314,12 @@
     return labels.map(label => ({
       text: label,
       bold: true,
+      font: "CairoSemiBold",
       color,
-      fillColor: "#FEE2E2",
       alignment: "center",
+      noWrap: true,
       fontSize: 8.5,
-      margin: [4, 5, 4, 5]
+      margin: [4, 6, 4, 6]
     }));
   }
 
@@ -3371,7 +4493,7 @@
     ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = isDarkHex(color) ? "#ffffff" : "#111827";
     ctx.font = `bold ${Math.floor(size * 0.52)}px Cairo, Arial, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -3491,15 +4613,15 @@
   function pdfDonutBlock(items, accent) {
     const segments = buildDonutSegments(items, accent);
     const legend = {
-      layout: { ...pdfTableLayout(), fillColor: () => null, paddingTop: () => 3, paddingBottom: () => 3, paddingLeft: () => 4, paddingRight: () => 4 },
+      layout: { ...pdfTableLayout(accent), fillColor: () => null, paddingTop: () => 3, paddingBottom: () => 3, paddingLeft: () => 4, paddingRight: () => 4 },
       table: {
         headerRows: 0,
-        widths: [12, "*", 64, 40],
+        widths: [40, 64, "*", 12],
         body: segments.map(segment => [
-          { text: "\u00a0", fontSize: 5, fillColor: segment.color },
-          { text: segment.label, fontSize: 8.5, color: "#374151" },
+          { text: `${segment.pct}%`, fontSize: 8.5, color: "#6b7280", alignment: "center" },
           { text: segment.valueText, fontSize: 8.5, bold: true, alignment: "center" },
-          { text: `${segment.pct}%`, fontSize: 8.5, color: "#6b7280", alignment: "center" }
+          { text: segment.label, fontSize: 8.5, color: "#374151", alignment: "right" },
+          { text: "\u00a0", fontSize: 5, fillColor: segment.color }
         ])
       }
     };
@@ -3570,24 +4692,24 @@
     const categories = totalsByCategory();
     const top = topProductsByQty();
     const payments = getPaymentStats();
-    const low = state.products.filter(p => p.quantity <= p.lowStock);
+    const low = activeProducts().filter(p => p.quantity <= p.lowStock);
     const marginPct = stats.allSales > 0 ? `${Math.round((stats.allProfit / stats.allSales) * 100)}%` : "0%";
     const content = [];
 
     content.push(pdfKpiCards([
-      { label: "إجمالي المبيعات", value: formatMoney(stats.allSales) },
-      { label: "صافي الربح", value: formatMoney(stats.allProfit) },
-      { label: "هامش الربح", value: marginPct },
-      { label: "عدد الفواتير", value: `${extra.salesCount}` },
+      { label: "القطع المباعة", value: `${stats.soldQty} قطعة` },
       { label: "متوسط الفاتورة", value: formatMoney(extra.salesCount ? stats.allSales / extra.salesCount : 0) },
-      { label: "القطع المباعة", value: `${stats.soldQty} قطعة` }
+      { label: "عدد الفواتير", value: `${extra.salesCount}` },
+      { label: "هامش الربح", value: marginPct },
+      { label: "صافي الربح", value: formatMoney(stats.allProfit) },
+      { label: "إجمالي المبيعات", value: formatMoney(stats.allSales) }
     ], accent, light));
 
     content.push(pdfKpiCards([
-      { label: "إجمالي الخصومات", value: formatMoney(extra.totalDiscount) },
-      { label: "إيراد الشحن", value: formatMoney(extra.totalShipping) },
+      { label: "عدد الفواتير", value: `${extra.salesCount}` },
       { label: "إجمالي الضريبة", value: formatMoney(extra.totalTax) },
-      { label: "عدد الفواتير", value: `${extra.salesCount}` }
+      { label: "إيراد الشحن", value: formatMoney(extra.totalShipping) },
+      { label: "إجمالي الخصومات", value: formatMoney(extra.totalDiscount) }
     ], accent, light));
 
     const gridCards = [];
@@ -3603,23 +4725,23 @@
       gridCards.push({
         title: "الأكثر مبيعاً",
         node: pdfTable([
-          pdfHeaderRow(["الصنف", "الكمية"], accent),
-          ...top.map(t => [{ text: t.label, fontSize: 8.5, bold: true }, { text: t.display, alignment: "center", bold: true, fontSize: 8.5 }])
-        ], ["*", "*"], { headerRows: 1 })
+          pdfHeaderRow(["الكمية", "الصنف"], accent),
+          ...top.map(t => [{ text: t.display, alignment: "center", bold: true, fontSize: 8.5 }, { text: t.label, fontSize: 8.5, bold: true, alignment: "right" }])
+        ], [64, "*"], { headerRows: 1 })
       });
     }
     content.push(...pdfSectionGrid(gridCards, accent, light));
 
     if (low.length) {
       content.push(pdfAlertBlock("أصناف منخفضة المخزون", pdfTable([
-        pdfDangerHeaderRow(["الصنف", "SKU", "المتبقي", "حد التنبيه"], "#B91C1C"),
+        pdfDangerHeaderRow(["حد التنبيه", "المتبقي", "SKU", "الصنف"], "#B91C1C"),
         ...low.map(p => [
-          { text: p.name, fontSize: 8.5, bold: true },
-          { text: p.sku, fontSize: 8.5 },
+          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 },
           { text: `${p.quantity}`, alignment: "center", fontSize: 8.5, bold: true, color: "#B91C1C" },
-          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 }
+          { text: p.sku, fontSize: 8.5, alignment: "center" },
+          { text: p.name, fontSize: 8.5, bold: true, alignment: "right" }
         ])
-      ], ["*", "*", 50, 50], { layout: pdfDangerLayout(), headerRows: 1 })));
+      ], [58, 52, 90, "*"], { layout: pdfDangerLayout(), headerRows: 1 })));
     }
 
     return content;
@@ -3643,16 +4765,16 @@
     if (rows.length) {
       content.push(pdfSectionTitle("تحليل ربحية الأصناف المباعة", accent));
       content.push(pdfTable([
-        pdfHeaderRow(["الصنف", "القطع", "الإيراد", "التكلفة", "صافي الربح", "الهامش"], accent),
+        pdfHeaderRow(["الهامش", "صافي الربح", "التكلفة", "الإيراد", "القطع", "الصنف"], accent),
         ...rows.map(p => [
-          { text: p.name, bold: true, fontSize: 8.5 },
-          { text: `${p.qty}`, alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(p.revenue), alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
+          { text: `${p.margin}%`, alignment: "center", fontSize: 8.5 },
           { text: formatMoney(p.profit), alignment: "center", bold: true, fontSize: 8.5 },
-          { text: `${p.margin}%`, alignment: "center", fontSize: 8.5 }
+          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.revenue), alignment: "center", fontSize: 8.5 },
+          { text: `${p.qty}`, alignment: "center", fontSize: 8.5 },
+          { text: p.name, bold: true, fontSize: 8.5, alignment: "right" }
         ])
-      ], ["*", "*", "*", "*", "*", "*"]));
+      ], [50, 64, 52, 52, 44, "*"]));
     } else {
       content.push({ text: "لا توجد مبيعات أصناف في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -3665,13 +4787,13 @@
     if (rows.length) {
       content.push(pdfSectionTitle("العملاء الأكثر شراءً", accent));
       content.push(pdfTable([
-        pdfHeaderRow(["اسم العميل", "عدد الفواتير", "إجمالي المشتريات"], accent),
+        pdfHeaderRow(["إجمالي المشتريات", "عدد الفواتير", "اسم العميل"], accent),
         ...rows.map(c => [
-          { text: c.name, bold: true, fontSize: 8.5 },
+          { text: formatMoney(c.total), alignment: "center", bold: true, fontSize: 8.5 },
           { text: `${c.count}`, alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(c.total), alignment: "center", bold: true, fontSize: 8.5 }
+          { text: c.name, bold: true, fontSize: 8.5, alignment: "right" }
         ])
-      ], ["*", "*", "*"]));
+      ], [70, 70, "*"]));
     } else {
       content.push({ text: "لا توجد مبيعات عملاء مسجلة في هذه الفترة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -3690,31 +4812,31 @@
     const content = [];
     content.push(pdfSectionTitle("تقرير المخزون التفصيلي", accent));
     content.push(pdfKpiCards([
-      { label: "عدد الأصناف", value: `${products.length}` },
-      { label: "إجمالي القطع", value: `${totalQty}` },
-      { label: "قيمة البيع", value: formatMoney(retailValue) },
-      { label: "قيمة التكلفة", value: formatMoney(costValue) },
+      { label: "أصناف منخفضة", value: `${lowCount}` },
       { label: "الربح المتوقع", value: formatMoney(retailValue - costValue) },
-      { label: "أصناف منخفضة", value: `${lowCount}` }
+      { label: "قيمة التكلفة", value: formatMoney(costValue) },
+      { label: "قيمة البيع", value: formatMoney(retailValue) },
+      { label: "إجمالي القطع", value: `${totalQty}` },
+      { label: "عدد الأصناف", value: `${products.length}` }
     ], accent, light));
     if (products.length) {
       const thumbs = await Promise.all(products.map(p => resolveThumbForPdf(p.image, 44, p.name, "circle")));
       content.push(pdfTable([
-        pdfHeaderRow(["الصورة", "الصنف", "SKU", "الفئة", "الكمية", "سعر البيع", "التكلفة", "قيمة المخزون", "الحالة"], accent),
+        pdfHeaderRow(["الحالة", "قيمة المخزون", "التكلفة", "سعر البيع", "الكمية", "الفئة", "SKU", "الصورة", "الصنف"], accent),
         ...products.map((p, index) => [
+          { text: p.quantity <= p.lowStock ? "منخفض" : "متاح", alignment: "center", bold: true, fontSize: 8.5, color: p.quantity <= p.lowStock ? "#dc2626" : "#15803d" },
+          { text: formatMoney(p.price * p.quantity), alignment: "center", bold: true, fontSize: 8.5 },
+          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
+          { text: formatMoney(p.price), alignment: "center", fontSize: 8.5 },
+          { text: `${p.quantity}`, alignment: "center", fontSize: 8.5 },
+          { text: p.category, alignment: "center", fontSize: 8.5 },
+          { text: p.sku, alignment: "center", fontSize: 8.5 },
           thumbs[index]
             ? { image: thumbs[index], width: 24, height: 24, alignment: "center", margin: [1, 1, 1, 1] }
             : { text: "", margin: [2, 3, 2, 3] },
-          { text: p.name, bold: true, fontSize: 8.5 },
-          { text: p.sku, fontSize: 8.5 },
-          { text: p.category, fontSize: 8.5 },
-          { text: `${p.quantity}`, alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(p.price), alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(p.cost), alignment: "center", fontSize: 8.5 },
-          { text: formatMoney(p.price * p.quantity), alignment: "center", bold: true, fontSize: 8.5 },
-          { text: p.quantity <= p.lowStock ? "منخفض" : "متاح", alignment: "center", bold: true, fontSize: 8.5, color: p.quantity <= p.lowStock ? "#dc2626" : "#15803d" }
+          { text: p.name, bold: true, fontSize: 8.5, alignment: "right" }
         ])
-      ], [30, "*", 52, 52, 38, 54, 50, 62, 44]));
+      ], [44, 74, 50, 56, 48, 52, 52, 46, "*"]));
     } else {
       content.push({ text: "لا توجد أصناف مطابقة للفلاتر المحددة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -3728,10 +4850,10 @@
     const content = [];
     content.push(pdfSectionTitle("تحليل الأرباح الهامشية", accent));
     content.push(pdfKpiCards([
-      { label: "إجمالي الإيرادات", value: formatMoney(stats.allSales) },
-      { label: "صافي الربح", value: formatMoney(stats.allProfit) },
+      { label: "القطع المباعة", value: `${stats.soldQty}` },
       { label: "هامش الربح", value: marginPct },
-      { label: "القطع المباعة", value: `${stats.soldQty}` }
+      { label: "صافي الربح", value: formatMoney(stats.allProfit) },
+      { label: "إجمالي الإيرادات", value: formatMoney(stats.allSales) }
     ], accent, light));
     if (margins.length) {
       content.push(pdfSection("هوامش الربح حسب الفئة", accent, pdfProgressRows(
@@ -3763,13 +4885,13 @@
     if (top.length) {
       content.push(pdfSectionTitle("الأكثر مبيعاً", accent));
       content.push(pdfTable([
-        pdfHeaderRow(["الترتيب", "الصنف", "الكمية"], accent),
+        pdfHeaderRow(["الكمية", "الصنف", "الترتيب"], accent),
         ...top.map((t, i) => [
-          { text: `${i + 1}`, alignment: "center", bold: true, fontSize: 8.5, color: i < 3 ? accent : "#6b7280" },
-          { text: t.label, bold: true, fontSize: 8.5 },
-          { text: t.display, alignment: "center", bold: true, fontSize: 8.5 }
+          { text: t.display, alignment: "center", bold: true, fontSize: 8.5 },
+          { text: t.label, bold: true, fontSize: 8.5, alignment: "right" },
+          { text: `${i + 1}`, alignment: "center", bold: true, fontSize: 8.5, color: i < 3 ? accent : "#6b7280" }
         ])
-      ], [40, "*", 60]));
+      ], [64, "*", 40]));
     } else {
       content.push({ text: "لا توجد مبيعات كافية للرسم بعد.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -3794,17 +4916,17 @@
     if (low.length) {
       const thumbs = await Promise.all(low.map(p => resolveThumbForPdf(p.image, 44, p.name, "circle")));
       content.push(pdfAlertBlock("أصناف منخفضة المخزون", pdfTable([
-        pdfDangerHeaderRow(["الصورة", "الصنف", "SKU", "المتبقي", "حد التنبيه"], "#B91C1C"),
+        pdfDangerHeaderRow(["حد التنبيه", "المتبقي", "SKU", "الصورة", "الصنف"], "#B91C1C"),
         ...low.map((p, index) => [
+          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 },
+          { text: `${p.quantity}`, alignment: "center", bold: true, fontSize: 8.5, color: "#B91C1C" },
+          { text: p.sku, alignment: "center", fontSize: 8.5 },
           thumbs[index]
             ? { image: thumbs[index], width: 24, height: 24, alignment: "center", margin: [1, 1, 1, 1] }
             : { text: "", margin: [2, 3, 2, 3] },
-          { text: p.name, bold: true, fontSize: 8.5 },
-          { text: p.sku, fontSize: 8.5 },
-          { text: `${p.quantity}`, alignment: "center", bold: true, fontSize: 8.5, color: "#B91C1C" },
-          { text: `${p.lowStock}`, alignment: "center", fontSize: 8.5 }
+          { text: p.name, bold: true, fontSize: 8.5, alignment: "right" }
         ])
-      ], [30, "*", 52, 40, 40], { layout: pdfDangerLayout(), headerRows: 1 })));
+      ], [58, 52, 52, 46, "*"], { layout: pdfDangerLayout(), headerRows: 1 })));
     } else {
       content.push({ text: "لا توجد تنبيهات مخزون مطابقة للفلاتر المحددة.", alignment: "center", color: "#6b7280", margin: [0, 20, 0, 0] });
     }
@@ -3813,7 +4935,7 @@
 
   function pdfTable(body, widths, opts = {}) {
     return {
-      layout: opts.layout || pdfTableLayout(),
+      layout: opts.layout || pdfTableLayout(docAccent()),
       table: {
         headerRows: opts.headerRows !== undefined ? opts.headerRows : 1,
         widths,
@@ -3855,7 +4977,7 @@
 
   function saveSettings(event) {
     event.preventDefault();
-    state.settings = {
+    const nextSettings = {
       storeName: document.getElementById("storeName").value.trim() || "خيط بوتيك",
       currency: document.getElementById("currency").value.trim() || "ر.س",
       taxRate: Number(document.getElementById("taxRate").value || 0),
@@ -3868,9 +4990,13 @@
       companyAddress: document.getElementById("companyAddress")?.value.trim() || "",
       taxNumber: document.getElementById("taxNumber")?.value.trim() || "",
       commercialNumber: document.getElementById("commercialNumber")?.value.trim() || "",
-      allowTaxFree: !!document.getElementById("allowTaxFree")?.checked
+      allowTaxFree: !!document.getElementById("allowTaxFree")?.checked,
+      showInvoiceQr: !!document.getElementById("showInvoiceQr")?.checked
     };
-    saveAll();
+    if (!commitState({ settings: nextSettings })) {
+      showStorageFullDialog();
+      return;
+    }
     applySettings();
     toastMessage("تم حفظ الإعدادات");
     render();
@@ -3898,8 +5024,11 @@
         canvas.width = w;
         canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        state.settings.logo = canvas.toDataURL("image/png", 0.9);
-        saveAll();
+        const nextSettings = { ...state.settings, logo: canvas.toDataURL("image/png", 0.9) };
+        if (!commitState({ settings: nextSettings })) {
+          showStorageFullDialog();
+          return;
+        }
         applySettings();
         const preview = document.getElementById("logoPreview");
         if (preview) {
@@ -3964,7 +5093,7 @@
       exportDate: new Date().toISOString(),
       storeName: state.settings.storeName,
       stats: {
-        productsCount: state.products.length,
+        productsCount: activeProducts().length,
         salesCount: state.sales.length
       },
       products: state.products,
@@ -3996,10 +5125,11 @@
         }
         const confirmMsg = `هل أنت متأكد من استرجاع البيانات؟\n\nتفاصيل النسخة:\n• أصناف: ${data.products.length}\n• فواتير: ${data.sales.length}\n• المتجر: ${data.settings?.storeName || 'غير محدد'}\n• التاريخ: ${data.exportDate ? new Date(data.exportDate).toLocaleDateString('ar-EG-u-nu-latn') : 'غير معروف'}\n\n⚠️ سيتم استبدال بياناتك الحالية بالكامل بالبيانات التي في الملف.`;
         if (confirm(confirmMsg)) {
-          state.products = data.products;
-          state.sales = data.sales;
-          if (data.settings) state.settings = { ...defaultSettings(), ...data.settings };
-          saveAll();
+          const nextSettings = data.settings ? { ...defaultSettings(), ...data.settings } : state.settings;
+          if (!commitState({ products: data.products, sales: data.sales, settings: nextSettings })) {
+            showStorageFullDialog();
+            return;
+          }
           applySettings();
           render();
           toastMessage("تم استرجاع النسخة الاحتياطية بنجاح");
@@ -4030,18 +5160,23 @@
     state._reportFrom = null;
     state._reportTo = null;
 
-    saveAll();
+    if (!commitState({ products: [], sales: [], settings: defaultSettings() })) {
+      showStorageFullDialog();
+      return;
+    }
     applySettings();
     render();
     toastMessage("تمت إعادة ضبط المصنع ومسح جميع الأصناف والبيانات بالكامل");
   }
 
   function loadDemoData() {
-    if (state.products.length > 0 && !confirm("لديك أصناف موجودة بالفعل. هل تريد إضافة الأصناف التجريبية؟")) {
+    if (activeProducts().length > 0 && !confirm("لديك أصناف موجودة بالفعل. هل تريد إضافة الأصناف التجريبية؟")) {
       return;
     }
-    state.products = seedProducts();
-    saveAll();
+    if (!commitState({ products: seedProducts() })) {
+      showStorageFullDialog();
+      return;
+    }
     render();
     toastMessage("تم تحميل الأصناف التجريبية بنجاح");
   }
@@ -4099,7 +5234,7 @@
 
   function getInventoryStats() {
     let totalQty = 0, retailValue = 0, costValue = 0;
-    state.products.forEach(p => {
+    activeProducts().forEach(p => {
       totalQty += p.quantity;
       retailValue += p.price * p.quantity;
       costValue += p.cost * p.quantity;
