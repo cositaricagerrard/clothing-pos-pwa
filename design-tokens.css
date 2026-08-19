@@ -1,0 +1,101 @@
+/* === Design Tokens — المصدر الوحيد لنظام الألوان (Light + Dark) === */
+:root {
+  /* الألوان الدلالية */
+  --color-primary: #0F766E;
+  --color-primary-hover: #115E59;
+  --color-secondary: #2563EB;
+  --color-text-primary: #172033;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748B;
+  --color-border: #CBD5E1;
+  --color-border-strong: #94A3B8;
+  --color-background: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-secondary: #F1F5F9;
+  --color-success: #15803D;
+  --color-warning: #B45309;
+  --color-danger: #B91C1C;
+  --color-info: #1D4ED8;
+
+  /* أسماء مستعارة — التوافق مع styles.css الموجود (لا تحذف أياً منها) */
+  --bg: var(--color-background);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-secondary);
+  --ink: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --line: var(--color-border);
+  --accent: var(--color-primary);
+  --accent-soft: var(--color-primary);
+  --accent-2: #D77065;        /* وردي/كورال ثانوي للرسوم — إبقاؤه مقصوداً */
+  --steel: var(--color-info); /* أزرق معلوماتي للرسوم الافتراضية */
+  --gold: #C79A42;            /* ذهبي مميز — مقصود */
+  --warn: var(--color-warning);
+  --danger: var(--color-danger);
+  --card: var(--color-surface);
+  --shadow: 0 1px 2px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.07);
+  --radius: 10px;
+
+  /* أسماء لوحة التقارير — alias إلى نفس النظام */
+  --primary: var(--color-primary);
+  --primary-soft: #E6F1EF;
+  --secondary: var(--color-secondary);
+  --secondary-soft: #E8EEFC;
+  --bg-app: var(--color-background);
+  --card-bg: var(--color-surface);
+  --text-main: var(--color-text-primary);
+  --text-sub: var(--color-text-secondary);
+  --border-soft: var(--color-border);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger-c: var(--color-danger);
+  --shadow-soft: var(--shadow);
+}
+
+[data-theme="dark"] {
+  --color-primary: #2DD4BF;
+  --color-primary-hover: #5EEAD4;
+  --color-secondary: #60A5FA;
+  --color-text-primary: #F8FAFC;
+  --color-text-secondary: #CBD5E1;
+  --color-text-muted: #94A3B8;
+  --color-border: #334155;
+  --color-border-strong: #475569;
+  --color-background: #0F172A;
+  --color-surface: #172033;
+  --color-surface-secondary: #1E293B;
+  --color-success: #4ADE80;
+  --color-warning: #FBBF24;
+  --color-danger: #F87171;
+  --color-info: #60A5FA;
+
+  --bg: var(--color-background);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-secondary);
+  --ink: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --line: var(--color-border);
+  --accent: var(--color-primary);
+  --accent-soft: #7FD1BC;
+  --accent-2: #E07A6F;
+  --steel: var(--color-info);
+  --gold: #DFB256;
+  --warn: var(--color-warning);
+  --danger: var(--color-danger);
+  --card: var(--color-surface);
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+  --radius: 10px;
+
+  --primary: var(--color-primary);
+  --primary-soft: rgba(45,212,191,.16);
+  --secondary: var(--color-secondary);
+  --secondary-soft: rgba(96,165,250,.16);
+  --bg-app: var(--color-background);
+  --card-bg: var(--color-surface);
+  --text-main: var(--color-text-primary);
+  --text-sub: var(--color-text-secondary);
+  --border-soft: var(--color-border);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger-c: var(--color-danger);
+  --shadow-soft: var(--shadow);
+}

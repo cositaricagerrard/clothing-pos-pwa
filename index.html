@@ -8,6 +8,10 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="assets/icon-192.png">
   <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="design-tokens.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -114,7 +118,9 @@
         <span style="flex:1"></span>
         <button class="ghost" type="button" data-close-dialog>إغلاق</button>
         <button class="ghost" id="shareInvoiceButton" type="button">مشاركة</button>
-        <button class="ghost" id="downloadThermalButton" type="button" title="فاتورة حرارية 80mm للطباعة">حرارية</button>
+        <button class="ghost" id="thermalPreviewToggle" type="button" title="معاينة الفاتورة الحرارية">معاينة حرارية</button>
+        <button class="ghost" id="downloadThermalButton" type="button" data-thermal-paper="80" title="فاتورة حرارية 80mm">حرارية 80</button>
+        <button class="ghost" id="downloadThermal58Button" type="button" data-thermal-paper="58" title="فاتورة حرارية 58mm">حرارية 58</button>
         <button class="primary" id="downloadInvoiceButton" type="button">تحميل PDF</button>
       </footer>
     </section>
@@ -155,6 +161,80 @@
       <footer class="dialog-actions">
         <button class="ghost" id="confirmDialogCancel" type="button">إلغاء</button>
         <button class="danger" id="confirmDialogOk" type="button">تأكيد</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="dialog" id="paymentDialog">
+    <div class="dialog-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">تحصيل دفعة</p>
+          <h2>سداد دفعة من دين عميل</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <p class="muted" id="paymentDialogHint"></p>
+      <div class="fields">
+        <label>اسم العميل <input id="paymentCustomerName" required></label>
+        <div class="two">
+          <label>المبلغ <input id="paymentAmount" required min="0" step="0.01" type="number"></label>
+          <label>التاريخ <input id="paymentDate" type="date"></label>
+        </div>
+        <label>ملاحظة <input id="paymentNote" placeholder="اختياري — مثل: دفعة نقداً"></label>
+      </div>
+      <footer class="dialog-actions">
+        <button class="ghost" type="button" data-close-dialog>إلغاء</button>
+        <button class="primary" id="confirmPaymentButton" type="button">تسجيل الدفعة</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="dialog" id="customerDialog">
+    <div class="dialog-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">قاعدة عملاء المتجر</p>
+          <h2 id="customerDialogTitle">إضافة عميل جديد</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <p class="muted" id="customerDialogHint"></p>
+      <div class="form-grid customer-form-grid">
+        <label class="image-picker customer-photo-picker">
+          <input id="customerPhoto" type="file" accept="image/*">
+          <img id="customerPhotoPreview" alt="صورة العميل">
+          <span>صورة العميل</span>
+          <button class="image-zoom-btn" id="customerPhotoClear" type="button" hidden title="إزالة الصورة">✕ إزالة</button>
+        </label>
+        <div class="fields">
+          <input type="hidden" id="customerRecordId">
+          <label>اسم العميل <input id="customerFormName" required autocomplete="off"></label>
+          <label>رقم الهاتف <input id="customerFormPhone" inputmode="tel" autocomplete="off" placeholder="اختياري"></label>
+          <label>العنوان <input id="customerFormAddress" autocomplete="off" placeholder="اختياري — مثل: المنصورة، شارع الجيش"></label>
+          <div class="two">
+            <label>تصنيف العميل
+              <select id="customerFormClass"></select>
+            </label>
+            <label>شريحة الخصم
+              <select id="customerFormDiscount">
+                <option value="0">بدون خصم (0%)</option>
+                <option value="5">شريحة 5%</option>
+                <option value="10">شريحة 10%</option>
+                <option value="15">شريحة 15%</option>
+                <option value="20">شريحة 20%</option>
+                <option value="25">شريحة 25%</option>
+              </select>
+            </label>
+          </div>
+          <label>ملاحظات <textarea id="customerFormNotes" placeholder="اختياري — مثل: تفضيلات، ملاحظات الدفع"></textarea></label>
+        </div>
+      </div>
+      <footer class="dialog-actions">
+        <button class="danger ghost" id="deleteCustomerButton" type="button" hidden>حذف العميل</button>
+        <span style="flex:1"></span>
+        <button class="ghost" type="button" data-close-dialog>إلغاء</button>
+        <button class="primary" id="confirmCustomerButton" type="button">حفظ العميل</button>
       </footer>
     </div>
   </dialog>

@@ -1,7 +1,8 @@
-const CACHE_NAME = "clothing-pos-pwa-v35";
+const CACHE_NAME = "clothing-pos-pwa-v42";
 const CORE_ASSETS = [
   "./",
   "./index.html",
+  "./design-tokens.css",
   "./styles.css",
   "./app.js",
   "./assets/default-logo.js",
