@@ -191,6 +191,9 @@
     registerServiceWorker();
     updateConnection();
     refreshStorageEstimate();
+    scheduleAutoBackup();
+    setTimeout(checkForUpdates, 5000);
+    setTimeout(checkLowStockAlerts, 2000);
   }
 
   async function loadStateFromIdb() {
@@ -448,6 +451,8 @@
     state.expenses = candidates.expenses;
     state.payments = candidates.payments;
     state.customers = candidates.customers;
+    getFilteredSales.invalidate();
+    _renderDirty = true;
     return true;
   }
 
@@ -553,6 +558,7 @@
         saleShipping: state._saleShipping,
         salePayment: state._salePayment,
         saleTaxFree: state._saleTaxFree,
+        saleCoupon: state._saleCoupon || "",
         view: state.view,
         custView: state._custView,
         custSort: state._custSort,
@@ -589,6 +595,7 @@
     state._saleShipping = Math.max(0, Number(stored.saleShipping || 0));
     state._salePayment = ["نقدا", "بطاقة", "تحويل", "مختلط"].includes(stored.salePayment) ? stored.salePayment : "نقدا";
     state._saleTaxFree = !!stored.saleTaxFree;
+    state._saleCoupon = stored.saleCoupon || "";
     state._custView = ["cards", "table", "list"].includes(stored.custView) ? stored.custView : "cards";
     state._custSort = ["total", "count", "items", "last", "code", "name"].includes(stored.custSort) ? stored.custSort : "total";
     state._custQuery = stored.custQuery || "";
@@ -747,6 +754,8 @@
       if (document.visibilityState === "hidden") saveSession();
     });
     updateInstallButtons();
+    bindKeyboardShortcuts();
+    bindBarcodeScanner();
   }
 
   function isStandalone() {
@@ -842,6 +851,8 @@
     }, 500);
   }
 
+  let _lastRenderHash = "";
+  let _renderDirty = true;
   function render() {
     const item = navItems.find(nav => nav.id === state.view) || navItems[0];
     viewTitle.textContent = item.title;
@@ -856,8 +867,13 @@
       reports: renderReports,
       settings: renderSettings
     };
+    const hash = [state.view, state.cart.length, state.sales.length, state.products.length, state.search, state.category, state._saleDiscount, state._salePayment, state.currentInvoiceId, state._reportQuery, _renderDirty ? "d" : "c"].join("|");
+    if (hash === _lastRenderHash) return;
+    _lastRenderHash = hash;
+    _renderDirty = false;
     app.innerHTML = `<section class="view fade-in">${views[state.view]()}</section>`;
     wireViewEvents();
+    initLazyImages();
   }
 
   function renderDashboard() {
@@ -1101,6 +1117,10 @@
             <div class="two">
               <label>خصم <input id="discountAmount" min="0" step="0.01" type="number" value="${state._saleDiscount || 0}"></label>
               <label>مصاريف الشحن <input id="shippingAmount" min="0" step="0.01" type="number" value="${state._saleShipping || 0}"></label>
+            </div>
+            <div class="two">
+              <label>كود الخصم <input id="couponInput" value="${escapeAttr(state._saleCoupon || '')}" placeholder="أدخل كود الخصم"></label>
+              <button class="ghost" id="applyCouponBtn" type="button" style="align-self:end;margin-bottom:4px">تطبيق</button>
             </div>
             <label>طريقة الدفع
               <select id="paymentMethod">
@@ -2773,6 +2793,74 @@
           <p class="muted" style="margin-top:10px">يتم حفظ الأصناف بالفواتير والإعدادات في ملف واحد يمكنك نقله لأي جهاز أو موبايل آخر.</p>
         </section>
 
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>أكواد الخصم</h2>
+              <p class="muted">إنشاء وأدارة أكواد الخصم التي يمكن استخدامها عند البيع.</p>
+            </div>
+          </div>
+          <div class="two">
+            <label>كود الخصم <input id="couponCode" placeholder=" مثال: SALE20"></label>
+            <label>النوع
+              <select id="couponType"><option value="percent">نسبة %</option><option value="fixed">مبلغ ثابت</option></select>
+            </label>
+          </div>
+          <div class="two">
+            <label>القيمة <input id="couponValue" min="1" step="1" type="number" value="10"></label>
+            <label>الحد الأقصى للاستخدام <input id="couponMaxUses" min="0" step="1" type="number" value="0" placeholder="0 = بلا حد"></label>
+          </div>
+          <label>انتهاء الصلاحية <input id="couponExpires" type="date"></label>
+          <div class="two" style="margin-top:8px">
+            <button class="primary" id="saveCouponBtn" type="button">حفظ الكود</button>
+          </div>
+          ${renderCouponsSettings()}
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>سجل التدقيق</h2>
+              <p class="muted">مراقبة جميع العمليات الحساسة في النظام.</p>
+            </div>
+          </div>
+          ${renderAuditLog()}
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>تصدير Excel</h2>
+              <p class="muted">تصدير البيانات إلى ملف Excel.</p>
+            </div>
+          </div>
+          <div class="two">
+            <button class="ghost" id="exportProductsExcel" type="button">تصدير الأصناف</button>
+            <button class="ghost" id="exportSalesExcel" type="button">تصدير المبيعات</button>
+          </div>
+          <div class="two" style="margin-top:8px">
+            <button class="ghost" id="exportExpensesExcel" type="button">تصدير المصروفات</button>
+            <button class="ghost" id="exportAllExcel" type="button">تصدير الكل</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>استيراد الأصناف من Excel</h2>
+              <p class="muted">استيراد أصناف من ملف Excel أو CSV مع معاينة قبل الاستيراد. الأعمدة المطلوبة: اسم الصنف، السعر. الباقي اختياري.</p>
+            </div>
+          </div>
+          <div class="two">
+            <label class="primary ghost" style="display:grid;place-items:center;cursor:pointer;text-align:center;font-weight:800;padding:8px 13px">
+              اختر ملف Excel / CSV
+              <input id="importExcelInput" type="file" accept=".xlsx,.xls,.csv" style="display:none">
+            </label>
+            <button class="ghost" id="downloadExcelTemplate" type="button">تحميل نموذج فارغ</button>
+          </div>
+          <div id="excelImportPreview" style="margin-top:12px"></div>
+        </section>
+
         <section class="panel" style="border-color:rgba(183, 67, 67, .3);background:rgba(183, 67, 67, .02)">
           <div class="panel-head">
             <div>
@@ -2846,12 +2934,13 @@
     });
 
     const search = document.getElementById("productSearch");
-    if (search) search.addEventListener("input", event => {
-      state.search = event.target.value;
+    const debouncedSearch = _debounce(value => {
+      state.search = value;
       state._productDisplayLimit = PRODUCT_PAGE_SIZE;
       state._saleDisplayLimit = SALE_PAGE_SIZE;
       render();
-    });
+    }, 250);
+    if (search) search.addEventListener("input", event => debouncedSearch(event.target.value));
     const category = document.getElementById("categoryFilter");
     if (category) category.addEventListener("change", event => {
       state.category = event.target.value;
@@ -2906,6 +2995,27 @@
       state._salePayment = paymentMethod.value;
       const hint = document.getElementById("creditHint");
       if (hint) hint.style.display = paymentMethod.value === "آجل" ? "" : "none";
+      saveSession();
+    });
+    const couponBtn = document.getElementById("applyCouponBtn");
+    if (couponBtn) couponBtn.addEventListener("click", () => {
+      const code = document.getElementById("couponInput")?.value.trim();
+      if (!code) { toastMessage("أدخل كود الخصم أولاً"); return; }
+      const subtotal = state.cart.reduce((sum, line) => {
+        const p = state.products.find(item => item.id === line.productId);
+        return sum + (p ? p.price * line.qty : 0);
+      }, 0);
+      const result = applyCoupon(code, subtotal);
+      if (result.valid) {
+        state._saleDiscount = result.discount;
+        state._saleCoupon = code;
+        const discountInput = document.getElementById("discountAmount");
+        if (discountInput) { discountInput.value = result.discount; discountInput.dispatchEvent(new Event("input")); }
+        auditLog("coupon", `تطبيق كود "${code}" — خصم ${formatMoney(result.discount)}`);
+        toastMessage(result.message);
+      } else {
+        toastMessage(result.message);
+      }
       saveSession();
     });
     const checkout = document.getElementById("checkoutButton");
@@ -3201,6 +3311,21 @@
     if (factoryResetBtn) factoryResetBtn.addEventListener("click", factoryReset);
     const loadDemoDataBtn = document.getElementById("loadDemoDataBtn");
     if (loadDemoDataBtn) loadDemoDataBtn.addEventListener("click", loadDemoData);
+    const saveCouponBtn = document.getElementById("saveCouponBtn");
+    if (saveCouponBtn) saveCouponBtn.addEventListener("click", saveCouponFromForm);
+    app.querySelectorAll(".delete-coupon-btn").forEach(btn => btn.addEventListener("click", () => deleteCoupon(Number(btn.dataset.couponIdx))));
+    const exportProductsExcel = document.getElementById("exportProductsExcel");
+    if (exportProductsExcel) exportProductsExcel.addEventListener("click", () => exportExcel("products"));
+    const exportSalesExcel = document.getElementById("exportSalesExcel");
+    if (exportSalesExcel) exportSalesExcel.addEventListener("click", () => exportExcel("sales"));
+    const exportExpensesExcel = document.getElementById("exportExpensesExcel");
+    if (exportExpensesExcel) exportExpensesExcel.addEventListener("click", () => exportExcel("expenses"));
+    const exportAllExcel = document.getElementById("exportAllExcel");
+    if (exportAllExcel) exportAllExcel.addEventListener("click", () => exportExcel("all"));
+    const importExcelInput = document.getElementById("importExcelInput");
+    if (importExcelInput) importExcelInput.addEventListener("change", handleExcelImport);
+    const downloadExcelTemplateBtn = document.getElementById("downloadExcelTemplate");
+    if (downloadExcelTemplateBtn) downloadExcelTemplateBtn.addEventListener("click", () => { if (window.XLSX) downloadExcelTemplate(); else ensureSheetJs().then(ok => { if (ok) downloadExcelTemplate(); }); });
   }
 
   function openProductDialog(productId) {
@@ -3475,6 +3600,7 @@
     if (state._returnSel) delete state._returnSel[id];
     saveSession();
     productDialog.close();
+    auditLog("delete", `حذف الصنف "${product.name}" (${product.sku || "بدون SKU"})`);
     toastMessage(`تم حذف الصنف "${product.name}" نهائياً`);
     render();
   }
@@ -3608,9 +3734,11 @@
     state._saleShipping = 0;
     state._saleTaxFree = false;
     state._salePayment = "نقدا";
+    state._saleCoupon = "";
     saveSession();
     render();
     showInvoice(sale.id);
+    auditLog("sale", `فاتورة ${sale.number} — ${formatMoney(sale.total)}`);
     toastMessage("تم إصدار الفاتورة وتحديث المخزون");
   }
 
@@ -4492,6 +4620,7 @@
     render();
     const updatedSale = state.sales.find(saleItem => saleItem.id === sale.id);
     invoicePrintArea.innerHTML = invoiceHtml(updatedSale || sale);
+    auditLog("return", `مرتجع فاتورة ${sale.number} — ${count} قطعة بقيمة ${formatMoney(total)}`);
     toastMessage(`تم إرجاع ${count} قطعة بقيمة ${formatMoney(total)} للمخزون`);
   }
 
@@ -6925,7 +7054,28 @@ const grandRowInCard = {
     state.payments = [];
   }
 
-  function getFilteredSales() {
+  function _memoize(fn, keyFn) {
+    const cache = new Map();
+    const wrapped = function(...args) {
+      const key = keyFn ? keyFn(...args) : JSON.stringify(args);
+      if (cache.has(key)) return cache.get(key);
+      const result = fn.apply(this, args);
+      cache.set(key, result);
+      return result;
+    };
+    wrapped.invalidate = () => cache.clear();
+    return wrapped;
+  }
+
+  function _debounce(fn, ms) {
+    let timer;
+    return function(...args) {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }
+
+  const getFilteredSales = _memoize(function() {
     let sales = state.sales;
     if (state._reportFrom) {
       const from = new Date(state._reportFrom);
@@ -6951,7 +7101,7 @@ const grandRowInCard = {
       sales = sales.filter(s => s.items.some(item => `${item.name} ${item.sku}`.toLowerCase().includes(query)));
     }
     return sales;
-  }
+  }, () => `${state.sales.length}-${state._reportFrom}-${state._reportTo}-${state._reportCategory}-${state._reportPayment}-${state._reportCustomer}-${state._reportQuery}`);
 
   function getStats() {
     const todayKey = new Date().toDateString();
@@ -7211,6 +7361,581 @@ const grandRowInCard = {
         console.info("Service worker registration is available when served over localhost or HTTPS.");
       });
     }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 1: Keyboard Shortcuts
+     ═══════════════════════════════════════════════════════ */
+  function bindKeyboardShortcuts() {
+    document.addEventListener("keydown", e => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      const dialogs = document.querySelectorAll("dialog[open]");
+      if (dialogs.length > 0) {
+        if (e.key === "Escape") {
+          const top = dialogs[dialogs.length - 1];
+          if (top.id === "exitDialog") cancelExitApp();
+          else top.close();
+        }
+        return;
+      }
+      if (e.key === "F2") { e.preventDefault(); go("sale"); }
+      else if (e.key === "F3") { e.preventDefault(); go("products"); setTimeout(() => { const s = document.getElementById("productSearch"); if (s) s.focus(); }, 100); }
+      else if (e.key === "F4") { e.preventDefault(); go("products"); setTimeout(() => { const b = document.getElementById("addProductButton"); if (b) b.click(); }, 100); }
+      else if (e.key === "F8") { e.preventDefault(); const c = document.getElementById("checkoutButton"); if (c) c.click(); }
+      else if (e.key === "F9") { e.preventDefault(); go("invoices"); }
+      else if (e.ctrlKey && e.key === "p") { e.preventDefault(); const p = document.getElementById("printInvoiceButton"); if (p) p.click(); else window.print(); }
+      else if (e.ctrlKey && e.key === "b") { e.preventDefault(); exportBackup(); }
+      else if (e.key === "Escape") { go("dashboard"); }
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 1: USB Barcode Scanner Support
+     ═══════════════════════════════════════════════════════ */
+  let _barcodeBuffer = "";
+  let _barcodeTimer = null;
+  function bindBarcodeScanner() {
+    document.addEventListener("keypress", e => {
+      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
+      _barcodeBuffer += e.key;
+      clearTimeout(_barcodeTimer);
+      _barcodeTimer = setTimeout(() => {
+        if (_barcodeBuffer.length >= 4) {
+          const code = _barcodeBuffer.trim();
+          const product = state.products.find(p => p.sku && p.sku.toLowerCase() === code.toLowerCase());
+          if (product) {
+            if (state.view !== "sale") go("sale");
+            setTimeout(() => addProductToCart(product.id), 50);
+            toastMessage(`تمت إضافة: ${product.name}`);
+          } else {
+            toastMessage(`لم يُعثر على صنف بالكود: ${code}`);
+          }
+        }
+        _barcodeBuffer = "";
+      }, 100);
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 1: Auto-Backup System (Last 7 Snapshots)
+     ═══════════════════════════════════════════════════════ */
+  const AUTO_BACKUP_KEY = "clothing-pos.auto-backups.v1";
+  const AUTO_BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
+  let _autoBackupTimer = null;
+
+  async function autoBackup() {
+    try {
+      const backups = (await idbGet(AUTO_BACKUP_KEY)) || [];
+      const snapshot = {
+        date: new Date().toISOString(),
+        data: {
+          products: state.products,
+          sales: state.sales,
+          customers: state.customers,
+          settings: state.settings,
+          expenses: state.expenses,
+          payments: state.payments
+        }
+      };
+      backups.unshift(snapshot);
+      if (backups.length > 7) backups.length = 7;
+      await idbSet(AUTO_BACKUP_KEY, backups);
+    } catch (err) {
+      console.warn("Auto-backup failed:", err);
+    }
+  }
+
+  function scheduleAutoBackup() {
+    if (_autoBackupTimer) clearInterval(_autoBackupTimer);
+    _autoBackupTimer = setInterval(autoBackup, AUTO_BACKUP_INTERVAL);
+    autoBackup();
+  }
+
+  async function restoreAutoBackup(index) {
+    const backups = (await idbGet(AUTO_BACKUP_KEY)) || [];
+    const backup = backups[index];
+    if (!backup || !backup.data) { toastMessage("النسخة الاحتياطية غير موجودة"); return; }
+    const ok = await confirmDialogPrompt(
+      "استعادة نسخة احتياطية",
+      `هل تريد استعادة بيانات نسخة ${new Date(backup.date).toLocaleString("ar-EG")}؟\nسيتم استبدال جميع البيانات الحالية.`,
+      "نعم، استعادة"
+    );
+    if (!ok) return;
+    state.products = backup.data.products || [];
+    state.sales = backup.data.sales || [];
+    state.customers = backup.data.customers || [];
+    state.settings = { ...state.settings, ...(backup.data.settings || {}) };
+    state.expenses = backup.data.expenses || [];
+    state.payments = backup.data.payments || [];
+    await commitState({});
+    render();
+    toastMessage("تمت استعادة النسخة الاحتياطية بنجاح");
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 1: Enhanced Notification System
+     ═══════════════════════════════════════════════════════ */
+  function notifyEnhanced(title, body, type, duration) {
+    const toastEl = document.getElementById("appToast");
+    if (toastEl) {
+      const colors = { success: "#059669", warning: "#d97706", error: "#dc2626", info: "#0f766e" };
+      toastEl.style.borderRightColor = colors[type] || colors.info;
+      toastEl.innerHTML = `<strong style="color:${colors[type] || colors.info}">${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span>`;
+      toastEl.classList.add("show");
+      clearTimeout(toastEl._timer);
+      toastEl._timer = setTimeout(() => toastEl.classList.remove("show"), duration || 4000);
+    }
+    if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+      new Notification(title, { body, icon: "assets/icon-192.png" });
+    }
+  }
+
+  function checkLowStockAlerts() {
+    const lowItems = state.products.filter(p => p.quantity > 0 && p.quantity <= (p.lowStock || 5));
+    if (lowItems.length > 0 && state.view === "dashboard") {
+      notifyEnhanced("تنبيه مخزون", `${lowItems.length} أصناف على وشك النفاد`, "warning", 5000);
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 2: Lazy Image Loading
+     ═══════════════════════════════════════════════════════ */
+  function initLazyImages() {
+    const imgs = document.querySelectorAll("img[data-src]");
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const img = entry.target;
+            img.src = img.dataset.src;
+            img.removeAttribute("data-src");
+            observer.unobserve(img);
+          }
+        });
+      }, { rootMargin: "200px" });
+      imgs.forEach(img => observer.observe(img));
+    } else {
+      imgs.forEach(img => { img.src = img.dataset.src; img.removeAttribute("data-src"); });
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 2: Memoization Utility
+     ═══════════════════════════════════════════════════════ */
+  function memoize(fn, keyFn) {
+    const cache = new Map();
+    const wrapped = function(...args) {
+      const key = keyFn ? keyFn(...args) : JSON.stringify(args);
+      if (cache.has(key)) return cache.get(key);
+      const result = fn.apply(this, args);
+      cache.set(key, result);
+      return result;
+    };
+    wrapped.invalidate = () => cache.clear();
+    return wrapped;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 2: Service Worker Auto-Update
+     ═══════════════════════════════════════════════════════ */
+  function checkForUpdates() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (!reg) return;
+      reg.update().then(() => {
+        if (reg.waiting) {
+          notifyEnhanced("تحديث متاح", "اضغط لإعادة تحميل التطبيق بأحدث إصدار", "info", 0);
+          reg.waiting.addEventListener("statechange", e => {
+            if (e.target.state === "activated") location.reload();
+          });
+          reg.waiting.postMessage("SKIP_WAITING");
+        }
+      });
+    }).catch(() => {});
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 3: Discounts / Coupons System
+     ═══════════════════════════════════════════════════════ */
+  const COUPONS_KEY = "clothing-pos.coupons.v1";
+
+  function getCoupons() { return state.coupons || []; }
+
+  function validateCoupon(code) {
+    const coupons = getCoupons();
+    const coupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
+    if (!coupon) return null;
+    if (coupon.expiresAt && new Date(coupon.expiresAt) < new Date()) return null;
+    if (coupon.maxUses > 0 && (coupon.usedCount || 0) >= coupon.maxUses) return null;
+    return coupon;
+  }
+
+  function applyCoupon(code, subtotal) {
+    const coupon = validateCoupon(code);
+    if (!coupon) return { valid: false, discount: 0, message: "كود الخصم غير صالح أو منتهي الصلاحية" };
+    let discount = 0;
+    if (coupon.type === "percent") discount = Math.round(subtotal * coupon.value / 100 * 100) / 100;
+    else if (coupon.type === "fixed") discount = Math.min(coupon.value, subtotal);
+    return { valid: true, discount, message: `تم تطبيق خصم ${coupon.type === "percent" ? coupon.value + "%" : formatMoney(coupon.value)}`, coupon };
+  }
+
+  function renderCouponsSettings() {
+    const coupons = getCoupons();
+    return `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><div><h3>أكواد الخصم</h3><p class="muted">إنشاء وأدارة أكواد الخصم التي يمكن استخدامها عند البيع.</p></div>
+          <button class="primary" id="addCouponBtn" type="button">إضافة كود</button></div>
+        ${coupons.length === 0 ? '<div class="empty">لا توجد أكواد خصم بعد.</div>' : `
+        <div style="overflow-x:auto">
+          <table class="data-table"><thead><tr><th>الكود</th><th>النوع</th><th>القيمة</th><th>الحد الأقصى</th><th>انتهاء الصلاحية</th><th>الإجراءات</th></tr></thead><tbody>
+          ${coupons.map((c, i) => `<tr>
+            <td><strong>${escapeHtml(c.code)}</strong></td>
+            <td>${c.type === "percent" ? "نسبة %" : "مبلغ ثابت"}</td>
+            <td>${c.type === "percent" ? c.value + "%" : formatMoney(c.value)}</td>
+            <td>${c.maxUses > 0 ? `${c.usedCount || 0}/${c.maxUses}` : "∞"}</td>
+            <td>${c.expiresAt ? new Date(c.expiresAt).toLocaleDateString("ar-EG") : "∞"}</td>
+            <td><button class="ghost danger delete-coupon-btn" data-coupon-idx="${i}" type="button">حذف</button></td>
+          </tr>`).join("")}
+          </tbody></table></div>`}
+      </div>`;
+  }
+
+  function saveCouponFromForm() {
+    const code = document.getElementById("couponCode")?.value.trim();
+    const type = document.getElementById("couponType")?.value;
+    const value = Number(document.getElementById("couponValue")?.value || 0);
+    const maxUses = Number(document.getElementById("couponMaxUses")?.value || 0);
+    const expiresAt = document.getElementById("couponExpires")?.value || "";
+    if (!code || value <= 0) { toastMessage("أدخل كوداً وقيمة صالحة"); return; }
+    const coupons = getCoupons();
+    if (coupons.some(c => c.code.toUpperCase() === code.toUpperCase())) { toastMessage("هذا الكود موجود مسبقاً"); return; }
+    coupons.push({ code, type, value, maxUses, expiresAt, usedCount: 0, createdAt: new Date().toISOString() });
+    state.coupons = coupons;
+    saveSession();
+    toastMessage("تم إضافة كود الخصم");
+    render();
+  }
+
+  function deleteCoupon(idx) {
+    const coupons = getCoupons();
+    coupons.splice(idx, 1);
+    state.coupons = coupons;
+    saveSession();
+    render();
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 3: Advanced Search (for products)
+     ═══════════════════════════════════════════════════════ */
+  function parseAdvancedSearch(query) {
+    const filters = { text: "", category: null, priceMin: null, priceMax: null, size: null, color: null, stockMax: null };
+    let q = query;
+    const extract = (pattern, key) => {
+      const match = q.match(pattern);
+      if (match) { filters[key] = match[1]; q = q.replace(match[0], ""); }
+    };
+    extract(/فئة[:\s]+(\S+)/i, "category");
+    extract(/سعر[<>>=]+(\d+)/i, "priceMin");
+    extract(/مقاس[:\s]+(\S+)/i, "size");
+    extract(/لون[:\s]+(\S+)/i, "color");
+    extract(/مخزون[<>]+(\d+)/i, "stockMax");
+    filters.text = q.trim().toLowerCase();
+    return filters;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 3: Excel Export (SheetJS CDN loaded dynamically)
+     ═══════════════════════════════════════════════════════ */
+  async function ensureSheetJs() {
+    if (window.XLSX) return true;
+    return new Promise(resolve => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  }
+
+  async function exportExcel(type) {
+    if (!(await ensureSheetJs())) { toastMessage("فشل تحميل مكتبة Excel. تحقق من الاتصال."); return; }
+    const wb = XLSX.utils.book_new();
+    if (type === "products" || type === "all") {
+      const rows = activeProducts().map(p => ({ "الاسم": p.name, "SKU": p.sku, "الفئة": p.category, "المقاس": p.size, "اللون": p.color, "السعر": p.price, "التكلفة": p.cost, "الكمية": p.quantity, "حد التنبيه": p.lowStock }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "الأصناف");
+    }
+    if (type === "sales" || type === "all") {
+      const rows = state.sales.map(s => ({ "رقم الفاتورة": s.number, "التاريخ": new Date(s.date).toLocaleDateString("ar-EG"), "العميل": s.customerName, "طريقة الدفع": s.paymentMethod, "الإجمالي": s.total, "الخصم": s.discount, "الضريبة": s.tax, "عدد الأصناف": s.items.length }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "المبيعات");
+    }
+    if (type === "expenses" || type === "all") {
+      const rows = state.expenses.map(e => ({ "الوصف": e.description, "المبلغ": e.amount, "التاريخ": new Date(e.date).toLocaleDateString("ar-EG"), "الفئة": e.category || "" }));
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "المصروفات");
+    }
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `pos-export-${type}-${dateStr}.xlsx`);
+    toastMessage("تم التصدير إلى Excel بنجاح");
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     Excel Import with Preview
+     ═══════════════════════════════════════════════════════ */
+  const EXCEL_FIELD_MAP = {
+    "اسم الصنف": "name", "الاسم": "name", "name": "name", "اسم المنتج": "name",
+    "sku": "sku", "كود": "sku", "الكود": "sku", "barcode": "sku",
+    "الفئة": "category", "category": "category", "نوع": "category", "النوع": "category",
+    "المقاس": "size", "size": "size", "مقاس": "size",
+    "اللون": "color", "color": "color", "لون": "color",
+    "الكمية": "quantity", "quantity": "quantity", "كمية": "quantity", "-stock": "quantity", "الstocks": "quantity",
+    "السعر": "price", "price": "price", "سعر": "price", "سعر البيع": "price",
+    "التكلفة": "cost", "cost": "cost", "تكلفة": "cost", "سعر الشراء": "cost",
+    "حد التنبيه": "lowStock", "lowStock": "lowStock", "تنبيه": "lowStock", "最低库存": "lowStock"
+  };
+
+  let _importPreviewData = null;
+  let _importColumnMap = {};
+
+  function downloadExcelTemplate() {
+    if (!window.XLSX) { toastMessage("جاري تحميل مكتبة Excel..."); return; }
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["اسم الصنف", "SKU", "الفئة", "المقاس", "اللون", "الكمية", "السعر", "التكلفة", "حد التنبيه"],
+      ["فستان صيفي", "DR-001", "نسائي", "M", "أحمر", "50", "299", "120", "10"],
+      ["قميص رجالي", "SH-002", "رجالي", "L", "أزرق", "30", "199", "80", "5"]
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "نموذج الأصناف");
+    XLSX.writeFile(wb, "products-template.xlsx");
+    toastMessage("تم تحميل النموذج");
+  }
+
+  function parseImportFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+          if (json.length === 0) { reject(new Error("الملف فارغ")); return; }
+          resolve(json);
+        } catch (err) { reject(err); }
+      };
+      reader.onerror = () => reject(new Error("فشل قراءة الملف"));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function autoMapColumns(headers) {
+    const map = {};
+    headers.forEach(h => {
+      const key = EXCEL_FIELD_MAP[h.toLowerCase().trim()];
+      if (key) map[h] = key;
+    });
+    if (!Object.values(map).includes("name")) {
+      const first = headers[0];
+      if (first) map[first] = "name";
+    }
+    return map;
+  }
+
+  function renderImportPreview(rows, columnMap) {
+    if (!rows || rows.length === 0) return "";
+    const headers = Object.keys(rows[0]);
+    const fieldOptions = [
+      ["— (تجاهل)", ""],
+      ["اسم الصنف *", "name"], ["SKU", "sku"], ["الفئة", "category"],
+      ["المقاس", "size"], ["اللون", "color"], ["الكمية", "quantity"],
+      ["السعر *", "price"], ["التكلفة", "cost"], ["حد التنبيه", "lowStock"]
+    ];
+    const mappedRows = rows.slice(0, 5).map(row => {
+      const mapped = {};
+      headers.forEach(h => {
+        const field = columnMap[h] || "";
+        if (field) mapped[field] = row[h];
+      });
+      return mapped;
+    });
+    return `
+      <div style="margin-bottom:10px">
+        <strong>تعيين الأعمدة:</strong>
+        <small class="muted">— اختر ما يقابل كل عمود من ملف Excel</small>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+        ${headers.map(h => `
+          <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;background:var(--surface);padding:4px 8px;border-radius:6px;border:1px solid var(--line)">
+            <span style="font-weight:600;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeAttr(h)}">${escapeHtml(h)}</span>
+            <select class="import-col-map" data-excel-col="${escapeAttr(h)}" style="font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid var(--line)">
+              ${fieldOptions.map(([label, value]) => `<option value="${value}" ${columnMap[h] === value ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </label>
+        `).join("")}
+      </div>
+      <div style="overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">
+        <table class="data-table" style="font-size:12px">
+          <thead><tr>
+            <th>#</th>
+            ${fieldOptions.filter(([,v]) => v).map(([,v]) => `<th>${fieldOptions.find(([,f]) => f === v)?.[0] || v}</th>`).join("")}
+          </tr></thead>
+          <tbody>
+            ${mappedRows.map((row, i) => `<tr>
+              <td>${i + 1}</td>
+              <td>${escapeHtml(row.name || "—")}</td>
+              <td>${escapeHtml(row.sku || "—")}</td>
+              <td>${escapeHtml(row.category || "—")}</td>
+              <td>${escapeHtml(row.size || "—")}</td>
+              <td>${escapeHtml(row.color || "—")}</td>
+              <td>${row.quantity !== undefined ? row.quantity : "—"}</td>
+              <td>${row.price !== undefined ? row.price : "—"}</td>
+              <td>${row.cost !== undefined ? row.cost : "—"}</td>
+              <td>${row.lowStock !== undefined ? row.lowStock : "—"}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="primary" id="confirmImportBtn" type="button">استيراد ${rows.length} صنف</button>
+        <button class="ghost" id="cancelImportBtn" type="button">إلغاء</button>
+        <span class="muted" style="font-size:12px">أول 5 أصناف للمعاينة — سيتم استيراد الكل</span>
+      </div>
+    `;
+  }
+
+  async function confirmExcelImport() {
+    if (!_importPreviewData || _importPreviewData.length === 0) { toastMessage("لا توجد بيانات للاستيراد"); return; }
+    const container = document.getElementById("excelImportPreview");
+    const selects = container ? container.querySelectorAll(".import-col-map") : [];
+    const colMap = {};
+    selects.forEach(sel => { colMap[sel.dataset.excelCol] = sel.value; });
+    const mappedName = Object.entries(colMap).filter(([, v]) => v === "name").map(([k]) => k);
+    if (mappedName.length === 0) { toastMessage("يجب تعيين عمود واحد على الأقل: اسم الصنف"); return; }
+    const mappedPrice = Object.entries(colMap).filter(([, v]) => v === "price").map(([k]) => k);
+    if (mappedPrice.length === 0) { toastMessage("يجب تعيين عمود: السعر"); return; }
+    const newProducts = [];
+    const skipped = [];
+    _importPreviewData.forEach((row, idx) => {
+      const name = mappedName.length ? String(row[mappedName[0]] || "").trim() : "";
+      if (!name) { skipped.push(idx + 1); return; }
+      const price = Number(row[mappedPrice[0]] || 0);
+      if (price <= 0) { skipped.push(idx + 1); return; }
+      const getField = (field, fallback) => {
+        const col = Object.entries(colMap).find(([, v]) => v === field);
+        return col ? String(row[col[0]] || fallback).trim() : fallback;
+      };
+      const sku = getField("sku", "").toUpperCase() || `IMP-${Date.now()}-${newProducts.length + 1}`;
+      const existingSku = state.products.some(p => p.sku && p.sku.toUpperCase() === sku.toUpperCase());
+      const finalSku = existingSku ? `IMP-${Date.now()}-${newProducts.length + 1}` : sku;
+      newProducts.push({
+        id: cryptoRandomId("p"),
+        name,
+        sku: finalSku,
+        category: getField("category", "غير مصنف"),
+        size: getField("size", "M"),
+        color: getField("color", ""),
+        quantity: Math.max(0, Number(getField("quantity", "0")) || 0),
+        price,
+        cost: Math.max(0, Number(getField("cost", "0")) || 0),
+        lowStock: Math.max(0, Number(getField("lowStock", "5")) || 5),
+        image: "assets/product-form-preview.png",
+        archived: false,
+        updatedAt: new Date().toISOString()
+      });
+    });
+    if (newProducts.length === 0) { toastMessage("لم يتم العثور على أصناف صالحة للاستيراد"); return; }
+    const ok = await confirmDialogPrompt(
+      "تأكيد استيراد الأصناف",
+      `سيتم إضافة ${newProducts.length} صنف جديد${skipped.length ? ` (تم تجاهل ${skipped.length} سطر غير صالح)` : ""}.\n\nهل تريد المتابعة؟`,
+      `استيراد ${newProducts.length} صنف`
+    );
+    if (!ok) return;
+    const nextProducts = state.products.concat(newProducts);
+    if (!(await commitState({ products: nextProducts }))) { showStorageFullDialog(); return; }
+    _importPreviewData = null;
+    if (container) container.innerHTML = `<div class="empty" style="color:var(--success);font-weight:700">تم استيراد ${newProducts.length} صنف بنجاح!</div>`;
+    auditLog("import", `استيراد ${newProducts.length} صنف من Excel`);
+    toastMessage(`تم استيراد ${newProducts.length} صنف بنجاح`);
+    setTimeout(() => render(), 1500);
+  }
+
+  async function handleExcelImport(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!(await ensureSheetJs())) { toastMessage("فشل تحميل مكتبة Excel. تحقق من الاتصال."); return; }
+    const container = document.getElementById("excelImportPreview");
+    if (container) container.innerHTML = `<div class="muted">جاري قراءة الملف...</div>`;
+    try {
+      const rows = await parseImportFile(file);
+      const headers = Object.keys(rows[0]);
+      _importColumnMap = autoMapColumns(headers);
+      _importPreviewData = rows;
+      if (container) container.innerHTML = renderImportPreview(rows, _importColumnMap);
+      const confirmBtn = document.getElementById("confirmImportBtn");
+      if (confirmBtn) confirmBtn.addEventListener("click", confirmExcelImport);
+      const cancelBtn = document.getElementById("cancelImportBtn");
+      if (cancelBtn) cancelBtn.addEventListener("click", () => {
+        _importPreviewData = null;
+        if (container) container.innerHTML = "";
+        event.target.value = "";
+      });
+      document.querySelectorAll(".import-col-map").forEach(sel => {
+        sel.addEventListener("change", () => {
+          const cols = {};
+          document.querySelectorAll(".import-col-map").forEach(s => { cols[s.dataset.excelCol] = s.value; });
+          _importColumnMap = cols;
+          if (container) container.innerHTML = renderImportPreview(_importPreviewData, _importColumnMap);
+          document.querySelectorAll(".import-col-map").forEach(s => {
+            s.addEventListener("change", arguments.callee);
+          });
+        });
+      });
+      toastMessage(`تم قراءة ${rows.length} سطر من الملف`);
+    } catch (err) {
+      if (container) container.innerHTML = `<div class="empty" style="color:var(--danger)">خطأ: ${escapeHtml(err.message)}</div>`;
+    }
+    event.target.value = "";
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     PHASE 4: Audit Log System
+     ═══════════════════════════════════════════════════════ */
+  const AUDIT_KEY = "clothing-pos.audit-log.v1";
+
+  function auditLog(action, details) {
+    const entry = {
+      id: cryptoRandomId("log"),
+      action,
+      details,
+      timestamp: new Date().toISOString()
+    };
+    const logs = state.auditLog || [];
+    logs.unshift(entry);
+    if (logs.length > 500) logs.length = 500;
+    state.auditLog = logs;
+  }
+
+  async function getAuditLogs() {
+    return state.auditLog || [];
+  }
+
+  function renderAuditLog() {
+    const logs = (state.auditLog || []).slice(0, 100);
+    const actionLabels = { sale: "بيع", return: "مرتجع", delete: "حذف", edit: "تعديل", backup: "نسخة احتياطية", coupon: "كود خصم", login: "دخول" };
+    return `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><div><h3>سجل التدقيق</h3><p class="muted">آخر ${logs.length} عملية مسجلة.</p></div></div>
+        ${logs.length === 0 ? '<div class="empty">لا توجد عمليات مسجلة بعد.</div>' : `
+        <div style="overflow-x:auto">
+          <table class="data-table"><thead><tr><th>التاريخ</th><th>الإجراء</th><th>التفاصيل</th></tr></thead><tbody>
+          ${logs.map(l => `<tr>
+            <td style="white-space:nowrap">${new Date(l.timestamp).toLocaleString("ar-EG")}</td>
+            <td><span class="status-pill">${actionLabels[l.action] || l.action}</span></td>
+            <td>${escapeHtml(typeof l.details === "string" ? l.details : JSON.stringify(l.details))}</td>
+          </tr>`).join("")}
+          </tbody></table></div>`}
+      </div>`;
   }
 
   init();
