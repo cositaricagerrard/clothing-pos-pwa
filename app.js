@@ -1014,9 +1014,9 @@
 
   function productViewBody(products) {
     const view = state._productView || "grid";
-    if (view === "table") return `<div class="scrollable-table">${productsTable(products)}</div>`;
-    if (view === "list") return `<div class="product-list">${products.map(productListRow).join("")}</div>`;
-    return `<div class="product-grid">${products.map(productCard).join("")}</div>`;
+    if (view === "table") return `<div class="scrollable-table view-content">${productsTable(products)}</div>`;
+    if (view === "list") return `<div class="product-list view-content">${products.map(productListRow).join("")}</div>`;
+    return `<div class="product-grid view-content">${products.map(productCard).join("")}</div>`;
   }
 
   function productListRow(product) {
@@ -1162,9 +1162,9 @@
 
   function saleProductBody(products) {
     const view = state._saleView || "list";
-    if (view === "grid") return `<div class="product-grid sale-grid">${products.map(saleProductCard).join("")}</div>`;
-    if (view === "compact") return `<div class="sale-compact">${products.map(saleCompactRow).join("")}</div>`;
-    return `<div class="sale-list" style="margin-top:12px">${products.map(saleProductRow).join("")}</div>`;
+    if (view === "grid") return `<div class="product-grid sale-grid view-content">${products.map(saleProductCard).join("")}</div>`;
+    if (view === "compact") return `<div class="sale-compact view-content">${products.map(saleCompactRow).join("")}</div>`;
+    return `<div class="sale-list view-content" style="margin-top:12px">${products.map(saleProductRow).join("")}</div>`;
   }
 
   function saleProductCard(product) {
@@ -1269,8 +1269,8 @@
 
   function invoiceViewBody(sales) {
     const view = state._invoiceView || "list";
-    if (view === "cards") return `<div class="invoice-cards">${sales.map(invoiceCard).join("")}</div>`;
-    return `<div class="invoice-list">${sales.map(invoiceRow).join("")}</div>`;
+    if (view === "cards") return `<div class="invoice-cards view-content">${sales.map(invoiceCard).join("")}</div>`;
+    return `<div class="invoice-list view-content">${sales.map(invoiceRow).join("")}</div>`;
   }
 
   function invoiceCard(sale) {
@@ -1613,13 +1613,13 @@
   }
 
   function renderCustomersBody(customers, view, topTotal) {
-    if (view === "table") return customersTable(customers);
+    if (view === "table") return `<div class="view-content">${customersTable(customers)}</div>`;
     if (view === "list") return `
-      <div class="compact-list customers-list">
+      <div class="compact-list customers-list view-content">
         ${customers.map((customer, index) => customerListRow(customer, index, topTotal)).join("")}
       </div>
     `;
-    return `<div class="customer-cards">${customers.map((customer, index) => customerCard(customer, index, topTotal)).join("")}</div>`;
+    return `<div class="customer-cards view-content">${customers.map((customer, index) => customerCard(customer, index, topTotal)).join("")}</div>`;
   }
 
   function customerClassBadge(classification) {
@@ -2916,6 +2916,7 @@
         state._productView = button.dataset.productView;
         saveSession();
         render();
+        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-sale-view]").forEach(button => {
@@ -2923,6 +2924,7 @@
         state._saleView = button.dataset.saleView;
         saveSession();
         render();
+        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-invoice-view]").forEach(button => {
@@ -2930,6 +2932,7 @@
         state._invoiceView = button.dataset.invoiceView;
         saveSession();
         render();
+        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
       });
     });
 
@@ -3109,7 +3112,9 @@
     app.querySelectorAll("[data-cust-view]").forEach(button => {
       button.addEventListener("click", () => {
         state._custView = button.dataset.custView;
+        saveSession();
         render();
+        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-cust-sort]").forEach(button => {

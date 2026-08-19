@@ -480,7 +480,7 @@ label textarea:focus,
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 10px;
 }
 
@@ -679,6 +679,7 @@ label textarea:focus,
 .metric {
   min-height: 98px;
   padding: 14px;
+  overflow: hidden;
 }
 
 .metric span {
@@ -690,13 +691,23 @@ label textarea:focus,
 .metric strong {
   display: block;
   margin-top: 8px;
-  font-size: 24px;
+  font-size: clamp(1.1rem, 4vw, 1.5rem);
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: ltr;
+  text-align: right;
 }
 
 .metric small {
   display: block;
   margin-top: 5px;
   color: var(--steel);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric.clickable {
@@ -2306,11 +2317,23 @@ img[data-product-zoom] {
   }
 
   .view-switch {
+    width: 100%;
     justify-content: stretch;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .view-switch::-webkit-scrollbar {
+    display: none;
   }
 
   .view-switch-btn {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 12.5px;
   }
 
   .customer-list-row {
@@ -2347,6 +2370,10 @@ img[data-product-zoom] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .stat-cards {
+    grid-template-columns: 1fr;
+  }
+
   .inline-actions {
     flex-wrap: wrap;
   }
@@ -2375,7 +2402,7 @@ img[data-product-zoom] {
   }
 
   .metric strong {
-    font-size: 20px;
+    font-size: clamp(1rem, 3.5vw, 1.25rem);
   }
 
   .product-grid {
@@ -2445,6 +2472,19 @@ img[data-product-zoom] {
 
   .image-zoom-controls .ghost {
     display: none;
+  }
+
+  .view-switch {
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+  }
+
+  .view-switch-btn {
+    min-height: 46px;
+    padding: 8px 6px;
+    font-size: 12px;
+    border-radius: 6px;
   }
 }
 
@@ -2537,7 +2577,7 @@ img[data-product-zoom] {
 
 .stat-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }
@@ -2548,14 +2588,19 @@ img[data-product-zoom] {
   border-radius: var(--radius);
   background: var(--surface);
   text-align: center;
+  overflow: hidden;
 }
 
 .stat-card .stat-value {
   display: block;
-  font-size: 22px;
+  font-size: clamp(1rem, 3.5vw, 1.375rem);
   font-weight: 900;
   color: var(--accent);
   margin: 6px 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: ltr;
 }
 
 .stat-card .stat-label {
@@ -2972,11 +3017,23 @@ img[data-product-zoom] {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+  white-space: nowrap;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 }
 
 .view-switch-btn.active {
   background: var(--accent);
   color: var(--surface);
+  box-shadow: 0 2px 6px rgba(14, 83, 73, .25);
+}
+
+@keyframes viewFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.view-content {
+  animation: viewFadeIn .2s ease-out;
 }
 
 /* === الأصناف: عرض قائمة وجدول === */
@@ -4621,6 +4678,21 @@ img[data-product-zoom] {
 .dash-kpi.gold .dash-kpi-icon {
   background: rgba(199, 154, 66, .17);
   color: #96741F;
+}
+
+@media (max-width: 360px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+  .metric strong {
+    font-size: 1rem;
+  }
+  .stat-cards {
+    grid-template-columns: 1fr;
+  }
+  .stat-card .stat-value {
+    font-size: 1rem;
+  }
 }
 
 [data-theme="dark"] .dash-kpi.gold .dash-kpi-icon {
