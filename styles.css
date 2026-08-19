@@ -3853,12 +3853,16 @@ img[data-product-zoom] {
 .dash-kpi-value {
   display: block;
   margin-top: 5px;
-  font-size: 22px;
+  font-size: clamp(1.1rem, 5vw, 1.5rem);
   font-weight: 800;
   line-height: 1.1;
   letter-spacing: -.2px;
   color: var(--text-main);
-  overflow-wrap: anywhere;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  direction: ltr;
+  text-align: right;
 }
 
 .dash-kpi-sub {
@@ -4526,7 +4530,10 @@ img[data-product-zoom] {
   }
 
   .dash-kpi-value {
-    font-size: 18px;
+    font-size: clamp(0.95rem, 4vw, 1.2rem);
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
   }
 
   .dash-kpi-trend {
@@ -4693,8 +4700,211 @@ img[data-product-zoom] {
   .stat-card .stat-value {
     font-size: 1rem;
   }
+  .dash-kpis {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .dash-kpi {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .dash-kpi-icon {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    font-size: 15px;
+  }
+  .dash-kpi-value {
+    font-size: clamp(1rem, 5.5vw, 1.15rem);
+  }
+  .report-types {
+    grid-template-columns: 1fr;
+  }
+  .rpt-builder .report-type {
+    padding: 8px 10px;
+  }
+  .rpt-builder .report-type-icon {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    font-size: 14px;
+  }
+  .dash-quick-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 429px) {
+  .dash-page {
+    padding: 10px;
+    gap: 12px;
+  }
+  .dash-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .dash-kpi {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px;
+  }
+  .dash-kpi-icon {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    font-size: 15px;
+  }
+  .dash-kpi-trend {
+    top: auto;
+    bottom: 8px;
+  }
+}
+
+@media (max-width: 767px) {
+  .rpt-financial-totals {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .dash-bar-row,
+  .dash-mini-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name value" "track track";
+  }
+  .rpt-card {
+    padding: 14px;
+  }
+  .rpt-card-head {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .rpt-builder .filter-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+  .rpt-builder .filter-fields > label:last-child {
+    grid-column: 1 / -1;
+  }
 }
 
 [data-theme="dark"] .dash-kpi.gold .dash-kpi-icon {
   color: #dfb256;
+}
+
+/* === جداول التقارير: نمط بطاقات على الموبايل === */
+@media (max-width: 767px) {
+  .scrollable-table {
+    overflow: visible;
+    max-height: none;
+    border: 0;
+  }
+
+  .report-table thead {
+    display: none;
+  }
+
+  .report-table,
+  .report-table tbody,
+  .report-table tr,
+  .report-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .report-table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  .report-table tbody tr {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 6px 12px;
+  }
+
+  .report-table tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 0;
+    border: 0;
+    border-bottom: 1px dashed var(--line);
+    font-size: 13.5px;
+    text-align: right;
+  }
+
+  .report-table tbody td:last-child {
+    border-bottom: 0;
+  }
+
+  .report-table tbody td::before {
+    content: attr(data-label);
+    font-size: 11.5px;
+    font-weight: 800;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .report-table tbody td:empty::before {
+    content: "";
+  }
+
+  .report-table tfoot,
+  .report-table tfoot tr,
+  .report-table tfoot td {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .report-table tfoot {
+    margin-top: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgba(14, 83, 73, .06);
+  }
+
+  .report-table tfoot tr {
+    gap: 8px;
+    padding: 6px 12px;
+  }
+
+  .report-table tfoot td {
+    border: 0;
+    flex: 1 1 auto;
+    text-align: right;
+  }
+}
+
+@media (max-width: 767px) {
+  .customers-table tbody tr {
+    padding: 8px 12px;
+  }
+
+  .customers-table img.cell-thumb,
+  #app .report-table .cell-thumb {
+    display: none;
+  }
+
+  .customers-table .inline-actions {
+    flex-wrap: wrap;
+  }
+
+  .customers-table td[data-label="إجراء"] {
+    justify-content: flex-start;
+  }
+}
+
+/* أوّلوية أخيرة: شاشات صغيرة جداً — عمود واحد لشبكات التقارير */
+@media (max-width: 360px) {
+  .dash-kpis {
+    grid-template-columns: 1fr;
+  }
+  .dash-quick-grid {
+    grid-template-columns: 1fr;
+  }
+  .rpt-builder .report-types {
+    grid-template-columns: 1fr;
+  }
 }

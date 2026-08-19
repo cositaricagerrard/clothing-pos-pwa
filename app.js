@@ -124,10 +124,10 @@
     return [
       productSeed("فستان وردي طويل", "DR-1201", "نسائي", "M", "وردي", 899, 520, 8, 3, "assets/catalog-preview.png"),
       productSeed("قميص أبيض كلاسيكي", "SH-2104", "نسائي", "L", "أبيض", 449, 230, 14, 4, "assets/catalog-preview.png"),
-      productSeed("جاكيت مبطن كحلي", "JK-3341", "رجالي", "XL", "كحلي", 1299, 780, 3, 4, "assets/catalog-preview.png"),
+      productSeed("جاكيت مبطن كحلي", "JK-3341", "رجالي", "XL", "كحلي", 1299, 780, 12, 4, "assets/catalog-preview.png"),
       productSeed("بنطال جينز مستقيم", "JN-5088", "رجالي", "32", "أزرق", 699, 390, 11, 3, "assets/product-form-preview.png"),
       productSeed("بلوزة حرير كورال", "BL-4022", "نسائي", "S", "كورال", 579, 310, 5, 3, "assets/product-form-preview.png"),
-      productSeed("تيشيرت أطفال أخضر", "KD-7750", "أطفال", "8 سنوات", "أخضر", 249, 120, 2, 5, "assets/catalog-preview.png"),
+      productSeed("تيشيرت أطفال أخضر", "KD-7750", "أطفال", "8 سنوات", "أخضر", 249, 120, 15, 5, "assets/catalog-preview.png"),
       productSeed("حزام جلد ذهبي", "AC-1802", "إكسسوارات", "موحد", "ذهبي", 199, 80, 18, 5, "assets/invoice-preview.png"),
       productSeed("وشاح ستان مطبوع", "AC-2250", "إكسسوارات", "موحد", "متعدد", 289, 135, 7, 4, "assets/reports-preview.png")
     ];
@@ -867,7 +867,7 @@
       reports: renderReports,
       settings: renderSettings
     };
-    const hash = [state.view, state.cart.length, state.sales.length, state.products.length, state.search, state.category, state._saleDiscount, state._salePayment, state.currentInvoiceId, state._reportQuery, _renderDirty ? "d" : "c"].join("|");
+    const hash = [state.view, state.cart.length, state.sales.length, state.products.length, state.search, state.category, state._saleDiscount, state._salePayment, state.currentInvoiceId, state._reportQuery, state.report.type, state._reportFrom, state._reportTo, state._reportCategory, state._reportPayment, state._reportCustomer, state._productView, state._saleView, state._invoiceView, state._custView, state._custSort, state._custOpen, state._showLowStockOnly ? "1" : "0", state._invoiceFilter, state._custQuery, state._productDisplayLimit, state._saleDisplayLimit, _renderDirty ? "d" : "c"].join("|");
     if (hash === _lastRenderHash) return;
     _lastRenderHash = hash;
     _renderDirty = false;
@@ -1042,13 +1042,13 @@
     return `<table class="report-table">
       <thead><tr><th>الصنف</th><th>SKU</th><th>الفئة</th><th>السعر</th><th>الكمية</th><th>الحالة</th><th>إجراء</th></tr></thead>
       <tbody>${products.map(p => `<tr>
-        <td><span class="cust-cell"><img class="cell-thumb" src="${escapeAttr(p.image)}" alt="" data-product-zoom="${p.id}" title="معاينة الصورة">${escapeHtml(p.name)}</span></td>
-        <td>${escapeHtml(p.sku)}</td>
-        <td>${escapeHtml(p.category)}</td>
-        <td>${formatMoney(p.price)}</td>
-        <td>${p.quantity}</td>
-        <td><span class="status-pill ${p.quantity <= p.lowStock ? "low" : "ok"}">${p.quantity <= p.lowStock ? "منخفض" : "متاح"}</span></td>
-        <td><button class="ghost" data-edit-product="${p.id}" type="button">تعديل</button></td>
+        <td data-label="الصنف"><span class="cust-cell"><img class="cell-thumb" src="${escapeAttr(p.image)}" alt="" data-product-zoom="${p.id}" title="معاينة الصورة">${escapeHtml(p.name)}</span></td>
+        <td data-label="SKU">${escapeHtml(p.sku)}</td>
+        <td data-label="الفئة">${escapeHtml(p.category)}</td>
+        <td data-label="السعر">${formatMoney(p.price)}</td>
+        <td data-label="الكمية">${p.quantity}</td>
+        <td data-label="الحالة"><span class="status-pill ${p.quantity <= p.lowStock ? "low" : "ok"}">${p.quantity <= p.lowStock ? "منخفض" : "متاح"}</span></td>
+        <td data-label="إجراء"><button class="ghost" data-edit-product="${p.id}" type="button">تعديل</button></td>
       </tr>`).join("")}</tbody>
     </table>`;
   }
@@ -1509,7 +1509,7 @@
     const by = state._custSort || "total";
     const copy = [...list];
     if (by === "name") copy.sort((a, b) => a.name.localeCompare(b.name, "ar"));
-    else if (by === "last") copy.sort((a, b) => new Date(b.lastDate) - new Date(a.lastDate));
+    else if (by === "last") copy.sort((a, b) => (new Date(b.lastDate) - new Date(a.lastDate)) || 0);
     else if (by === "count") copy.sort((a, b) => b.count - a.count);
     else if (by === "items") copy.sort((a, b) => b.items - a.items);
     else if (by === "code") copy.sort((a, b) => String(a.code).localeCompare(String(b.code), "en", { numeric: true }));
@@ -1539,7 +1539,9 @@
   }
 
   function shortDate(value) {
-    return new Intl.DateTimeFormat("ar-EG-u-nu-latn", { dateStyle: "medium" }).format(new Date(value));
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat("ar-EG-u-nu-latn", { dateStyle: "medium" }).format(date);
   }
 
   function renderCustomers() {
@@ -1691,7 +1693,7 @@
           <tbody>
             ${customers.map(customer => `
               <tr>
-                <td>
+                <td data-label="العميل">
                   <div class="cust-cell">
                     ${customerAvatarHtml(customer, "small")}
                     <div class="customer-card-name">
@@ -1703,13 +1705,13 @@
                     </div>
                   </div>
                 </td>
-                <td><span class="cust-code-badge">${escapeHtml(customer.code || "—")}</span></td>
-                <td>${customer.count}</td>
-                <td>${customer.items}</td>
-                <td>${shortDate(customer.lastDate)}</td>
-                <td><strong>${formatMoney(customer.total)}</strong>${customerDiscountBadge(customer.discount)}</td>
-                <td>${customer.debt > 0 ? `<span class="status-pill low">${formatMoney(customer.debt)}</span>` : `<span class="muted">—</span>`}</td>
-                <td>
+                <td data-label="الكود"><span class="cust-code-badge">${escapeHtml(customer.code || "—")}</span></td>
+                <td data-label="الفواتير">${customer.count}</td>
+                <td data-label="القطع">${customer.items}</td>
+                <td data-label="آخر شراء">${shortDate(customer.lastDate)}</td>
+                <td data-label="الإجمالي"><strong>${formatMoney(customer.total)}</strong>${customerDiscountBadge(customer.discount)}</td>
+                <td data-label="المستحق عليه">${customer.debt > 0 ? `<span class="status-pill low">${formatMoney(customer.debt)}</span>` : `<span class="muted">—</span>`}</td>
+                <td data-label="إجراء">
                   <div class="inline-actions">
                     <button class="ghost" data-cust-history="${escapeAttr(customer.name)}" type="button">السجل</button>
                     <button class="ghost" data-cust-edit="${escapeAttr(customer.name)}" type="button">تعديل</button>
@@ -1812,9 +1814,9 @@
             <table class="report-table">
               <thead><tr><th>التاريخ</th><th>المبلغ</th><th>ملاحظة</th></tr></thead>
               <tbody>${payments.map(p => `<tr>
-                <td>${dateTime(p.date)}</td>
-                <td><strong>${formatMoney(p.amount)}</strong></td>
-                <td class="muted">${escapeHtml(p.note || "—")}</td>
+                <td data-label="التاريخ">${dateTime(p.date)}</td>
+                <td data-label="المبلغ"><strong>${formatMoney(p.amount)}</strong></td>
+                <td data-label="ملاحظة" class="muted">${escapeHtml(p.note || "—")}</td>
               </tr>`).join("")}</tbody>
             </table>
           </div>
@@ -1939,11 +1941,11 @@
         ${list.length ? `<div class="scrollable-table"><table class="report-table">
           <thead><tr><th>التاريخ</th><th>الفئة</th><th>الملاحظة</th><th>المبلغ</th><th></th></tr></thead>
           <tbody>${list.map(exp => `<tr>
-            <td>${dateTime(exp.date)}</td>
-            <td><span class="status-pill">${escapeHtml(exp.category)}</span></td>
-            <td class="muted">${escapeHtml(exp.note || "—")}</td>
-            <td><strong>${formatMoney(exp.amount)}</strong></td>
-            <td><button class="ghost" data-exp-del="${exp.id}" type="button">حذف</button></td>
+            <td data-label="التاريخ">${dateTime(exp.date)}</td>
+            <td data-label="الفئة"><span class="status-pill">${escapeHtml(exp.category)}</span></td>
+            <td data-label="الملاحظة" class="muted">${escapeHtml(exp.note || "—")}</td>
+            <td data-label="المبلغ"><strong>${formatMoney(exp.amount)}</strong></td>
+            <td data-label=""><button class="ghost" data-exp-del="${exp.id}" type="button">حذف</button></td>
           </tr>`).join("")}</tbody>
         </table></div>` : `<div class="empty">لا توجد مصروفات مطابقة للفلاتر.</div>`}
       </section>
@@ -2413,12 +2415,12 @@
           <table class="report-table">
             <thead><tr><th>الصنف</th><th>القطع المباعة</th><th>إجمالي الإيراد</th><th>إجمالي التكلفة</th><th>صافي الربح</th><th>هامش الربح</th></tr></thead>
             <tbody>${productProfitability.map(p => `<tr>
-              <td>${escapeHtml(p.name)}</td>
-              <td>${p.qty} قطعة</td>
-              <td>${formatMoney(p.revenue)}</td>
-              <td>${formatMoney(p.cost)}</td>
-              <td style="font-weight:800;color:var(--accent)">${formatMoney(p.profit)}</td>
-              <td><span class="status-pill ${p.margin >= 30 ? 'ok' : 'low'}">${p.margin}%</span></td>
+              <td data-label="الصنف">${escapeHtml(p.name)}</td>
+              <td data-label="القطع المباعة">${p.qty} قطعة</td>
+              <td data-label="إجمالي الإيراد">${formatMoney(p.revenue)}</td>
+              <td data-label="إجمالي التكلفة">${formatMoney(p.cost)}</td>
+              <td data-label="صافي الربح" style="font-weight:800;color:var(--accent)">${formatMoney(p.profit)}</td>
+              <td data-label="هامش الربح"><span class="status-pill ${p.margin >= 30 ? 'ok' : 'low'}">${p.margin}%</span></td>
             </tr>`).join("")}</tbody>
           </table>
         </div>` : `<div class="empty">لا توجد مبيعات أصناف في هذه الفترة.</div>`}
@@ -2435,9 +2437,9 @@
           <table class="report-table">
             <thead><tr><th>اسم العميل</th><th>عدد الفواتير</th><th>إجمالي المشتريات</th></tr></thead>
             <tbody>${topCustomers.map(c => `<tr>
-              <td>${escapeHtml(c.name)}</td>
-              <td>${c.count} فاتورة</td>
-              <td style="font-weight:800">${formatMoney(c.total)}</td>
+              <td data-label="اسم العميل">${escapeHtml(c.name)}</td>
+              <td data-label="عدد الفواتير">${c.count} فاتورة</td>
+              <td data-label="إجمالي المشتريات" style="font-weight:800">${formatMoney(c.total)}</td>
             </tr>`).join("")}</tbody>
           </table>
         </div>` : `<div class="empty">لا توجد مبيعات عملاء مسجلة في هذه الفترة.</div>`}
@@ -2469,10 +2471,10 @@
           <table class="report-table">
             <thead><tr><th>الصنف</th><th>SKU</th><th>الفئة</th><th>الكمية</th><th>سعر البيع</th><th>التكلفة</th><th>قيمة المخزون</th><th>الحالة</th></tr></thead>
             <tbody>${products.map(p => `<tr>
-              <td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sku)}</td><td>${escapeHtml(p.category)}</td>
-              <td>${p.quantity}</td><td>${formatMoney(p.price)}</td><td>${formatMoney(p.cost)}</td>
-              <td>${formatMoney(p.price * p.quantity)}</td>
-              <td><span class="status-pill ${p.quantity <= p.lowStock ? 'low' : 'ok'}">${p.quantity <= p.lowStock ? 'منخفض' : 'متاح'}</span></td>
+              <td data-label="الصنف">${escapeHtml(p.name)}</td><td data-label="SKU">${escapeHtml(p.sku)}</td><td data-label="الفئة">${escapeHtml(p.category)}</td>
+              <td data-label="الكمية">${p.quantity}</td><td data-label="سعر البيع">${formatMoney(p.price)}</td><td data-label="التكلفة">${formatMoney(p.cost)}</td>
+              <td data-label="قيمة المخزون">${formatMoney(p.price * p.quantity)}</td>
+              <td data-label="الحالة"><span class="status-pill ${p.quantity <= p.lowStock ? 'low' : 'ok'}">${p.quantity <= p.lowStock ? 'منخفض' : 'متاح'}</span></td>
             </tr>`).join("")}</tbody>
             <tfoot><tr><td colspan="3">الإجمالي</td><td>${totalQty}</td><td colspan="2"></td><td>${formatMoney(retailValue)}</td><td></td></tr></tfoot>
           </table>
@@ -2604,9 +2606,9 @@
     return `<div class="scrollable-table"><table class="report-table">
       <thead><tr><th>الصنف</th><th>SKU</th><th>المتبقي</th><th>حد التنبيه</th><th>إجراء</th></tr></thead>
       <tbody>${items.map(p => `<tr>
-        <td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.sku)}</td>
-        <td><span class="status-pill low">${p.quantity}</span></td><td>${p.lowStock}</td>
-        <td><button class="ghost" data-edit-product="${p.id}" type="button">تعديل</button></td>
+        <td data-label="الصنف">${escapeHtml(p.name)}</td><td data-label="SKU">${escapeHtml(p.sku)}</td>
+        <td data-label="المتبقي"><span class="status-pill low">${p.quantity}</span></td><td data-label="حد التنبيه">${p.lowStock}</td>
+        <td data-label="إجراء"><button class="ghost" data-edit-product="${p.id}" type="button">تعديل</button></td>
       </tr>`).join("")}</tbody>
     </table></div>`;
   }
@@ -2916,7 +2918,7 @@
         state._productView = button.dataset.productView;
         saveSession();
         render();
-        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-sale-view]").forEach(button => {
@@ -2924,7 +2926,7 @@
         state._saleView = button.dataset.saleView;
         saveSession();
         render();
-        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-invoice-view]").forEach(button => {
@@ -2932,7 +2934,7 @@
         state._invoiceView = button.dataset.invoiceView;
         saveSession();
         render();
-        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
       });
     });
 
@@ -3114,7 +3116,7 @@
         state._custView = button.dataset.custView;
         saveSession();
         render();
-        document.getElementById("content").scrollTo({ top: 0, behavior: "smooth" });
+        window.scrollTo({ top: 0, behavior: "smooth" });
       });
     });
     app.querySelectorAll("[data-cust-sort]").forEach(button => {
@@ -7292,10 +7294,12 @@ const grandRowInCard = {
   }
 
   function dateTime(value) {
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "—";
     return new Intl.DateTimeFormat("ar-EG-u-nu-latn", {
       dateStyle: "medium",
       timeStyle: "short"
-    }).format(new Date(value));
+    }).format(date);
   }
 
   function generateSku() {
