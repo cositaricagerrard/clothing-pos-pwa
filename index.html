@@ -10,11 +10,26 @@
   <link rel="apple-touch-icon" href="assets/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="design-tokens.css">
-  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700;800;900&family=Rubik:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="design-tokens.css?v=20260827-reportfix3">
+  <link rel="stylesheet" href="styles.css?v=20260827-reportfix3">
 </head>
 <body>
+  <div class="splash" id="splashScreen" role="status" aria-live="polite">
+    <div class="splash-inner">
+      <div class="splash-logo" aria-hidden="true">
+        <img class="splash-logo-img" id="splashLogo" src="assets/icon-192.png" alt="">
+        <span class="splash-ring"></span>
+        <span class="splash-ring splash-ring-b"></span>
+      </div>
+      <h1 class="splash-name" id="splashStoreName">Abo Omar Store</h1>
+      <p class="splash-tagline">نظام البيع والمخزون</p>
+      <div class="splash-bar" aria-hidden="true"><span class="splash-bar-fill"></span></div>
+      <p class="splash-status" id="splashStatus">جاري تجهيز التطبيق…</p>
+      <p class="splash-tip">يعمل دون اتصال بعد أول زيارة · بياناتك محفوظة على هذا الجهاز</p>
+    </div>
+  </div>
+
   <div class="app-frame">
     <aside class="side-rail" aria-label="التنقل الرئيسي">
       <div class="brand">
@@ -45,7 +60,8 @@
         <div class="top-actions">
           <button class="icon-btn theme-toggle" id="themeToggleBtn" type="button" title="التبديل للوضع الداكن" aria-label="الوضع الداكن">🌙</button>
           <button class="icon-btn" id="mobileInstallButton" hidden type="button" aria-label="تثبيت التطبيق">+</button>
-          <button class="primary" id="quickSaleButton" type="button">بيع سريع</button>
+          <button class="icon-btn camera-scan-btn" id="topbarScanBtn" type="button" title="مسح باركود بالكاميرا (F3)" aria-label="مسح باركود">📷</button>
+          <button class="primary" id="quickSaleButton" type="button">بيع سريع (F2)</button>
         </div>
       </header>
 
@@ -112,16 +128,21 @@
   <dialog class="dialog invoice-dialog" id="invoiceDialog">
     <section class="dialog-panel invoice-shell">
       <div id="invoicePrintArea"></div>
-      <footer class="dialog-actions no-print">
-        <button class="danger ghost" id="deleteInvoiceButton" type="button">حذف الفاتورة</button>
-        <button class="ghost" id="returnInvoiceButton" type="button">استرجاع</button>
-        <span style="flex:1"></span>
-        <button class="ghost" type="button" data-close-dialog>إغلاق</button>
-        <button class="ghost" id="shareInvoiceButton" type="button">مشاركة</button>
-        <button class="ghost" id="thermalPreviewToggle" type="button" title="معاينة الفاتورة الحرارية">معاينة حرارية</button>
-        <button class="ghost" id="downloadThermalButton" type="button" data-thermal-paper="80" title="فاتورة حرارية 80mm">حرارية 80</button>
-        <button class="ghost" id="downloadThermal58Button" type="button" data-thermal-paper="58" title="فاتورة حرارية 58mm">حرارية 58</button>
-        <button class="primary" id="downloadInvoiceButton" type="button">تحميل PDF</button>
+      <footer class="dialog-actions no-print invoice-actions">
+        <div class="inv-actions-secondary" aria-label="خيارات إضافية">
+          <button class="chip ghost" id="returnInvoiceButton" type="button">استرجاع</button>
+          <button class="chip ghost whatsapp-btn" id="whatsappInvoiceButton" type="button" title="إرسال الفاتورة عبر واتساب">واتساب 💬</button>
+          <button class="chip ghost" id="thermalPreviewToggle" type="button" title="معاينة الفاتورة الحرارية">معاينة حرارية</button>
+          <button class="chip ghost" id="downloadThermalButton" type="button" data-thermal-paper="80" title="فاتورة حرارية 80mm">حرارية 80</button>
+          <button class="chip ghost" id="downloadThermal58Button" type="button" data-thermal-paper="58" title="فاتورة حرارية 58mm">حرارية 58</button>
+          <button class="chip ghost" id="shareInvoiceButton" type="button">مشاركة</button>
+        </div>
+        <div class="inv-actions-primary">
+          <button class="danger ghost" id="deleteInvoiceButton" type="button">حذف</button>
+          <button class="ghost" type="button" data-close-dialog>إغلاق</button>
+          <span style="flex:1"></span>
+          <button class="primary" id="downloadInvoiceButton" type="button">تحميل PDF</button>
+        </div>
       </footer>
     </section>
   </dialog>
@@ -297,8 +318,80 @@
     </div>
   </dialog>
 
+  <dialog class="dialog scanner-dialog" id="scannerDialog">
+    <div class="dialog-panel scanner-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">مسح ضوئي ذكي</p>
+          <h2>ماسح الباركود بالكاميرا</h2>
+        </div>
+        <button class="icon-btn" type="button" data-close-dialog id="closeScannerBtn" aria-label="إغلاق">×</button>
+      </header>
+      <div class="scanner-viewport" id="scannerViewport">
+        <video id="scannerVideo" autoplay playsinline muted></video>
+        <div class="scanner-laser"></div>
+        <div class="scanner-status" id="scannerStatus">جاري تشغيل الكاميرا...</div>
+      </div>
+      <footer class="dialog-actions">
+        <button class="ghost" type="button" data-close-dialog id="cancelScannerBtn">إلغاء</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="dialog expense-dialog" id="expenseDialog">
+    <div class="dialog-panel">
+      <header class="dialog-head">
+        <div>
+          <p class="eyebrow">إدارة المصروفات</p>
+          <h2 id="expenseDialogTitle">تسجيل مصروف جديد</h2>
+        </div>
+        <button class="icon-btn" value="cancel" type="button" data-close-dialog aria-label="إغلاق">×</button>
+      </header>
+      <div class="fields">
+        <div class="two">
+          <label>الفئة
+            <select id="expenseCategory">
+              <option value="إيجار">إيجار المحل</option>
+              <option value="رواتب">رواتب ومكافآت</option>
+              <option value="كهرباء ومياه">كهرباء ومياه</option>
+              <option value="إنترنت وهاتف">إنترنت وهاتف</option>
+              <option value="شحن وتوصيل">شحن وتوصيل</option>
+              <option value="تسويق وإعلانات">تسويق وإعلانات</option>
+              <option value="صيانة ومعدات">صيانة ومعدات</option>
+              <option value="مشتريات ونثريات">مشتريات ونثريات</option>
+              <option value="أخرى">مصروفات أخرى</option>
+            </select>
+          </label>
+          <label>المبلغ <input id="expenseAmount" required min="0" step="0.01" type="number" placeholder="0.00"></label>
+        </div>
+        <div class="two">
+          <label>التاريخ <input id="expenseDate" type="date" required></label>
+          <label>ملاحظة <input id="expenseNote" placeholder="اختياري — مثل: فاتورة الكهرباء لشهر أغسطس"></label>
+        </div>
+      </div>
+      <footer class="dialog-actions">
+        <button class="ghost" type="button" data-close-dialog>إلغاء</button>
+        <button class="primary" id="confirmExpenseButton" type="button">تسجيل المصروف</button>
+      </footer>
+    </div>
+  </dialog>
+
+
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="assets/default-logo.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260827-fix6"></script>
+  <script>
+    window.addEventListener("load", function () {
+      window.setTimeout(function () {
+        var splash = document.getElementById("splashScreen");
+        if (splash && !splash.classList.contains("is-done")) {
+          splash.classList.add("is-leaving");
+          splash.setAttribute("aria-hidden", "true");
+          window.setTimeout(function () { splash.classList.add("is-done"); }, 700);
+        }
+      }, 12000);
+    });
+  </script>
 </body>
 </html>
