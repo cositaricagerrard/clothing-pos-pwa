@@ -253,10 +253,67 @@
   function shareInvoiceWhatsApp(saleId) {
     const sale = state.sales.find(s => s.id === saleId);
     if (!sale) return;
-    const store = state.settings.storeName || "Abo Omar Store";
-    const itemsList = sale.items.map(item => `• ${item.name} (${item.qty} × ${moneyFormatter.format(item.price)})`).join("\n");
-    const text = `🧾 *فاتورة مبيعات من ${store}*\nرقم الفاتورة: ${sale.number}\nالتاريخ: ${formatDateDisplay(sale.date)}\n\n*الأصناف:*\n${itemsList}\n\n*الإجمالي النهائي:* ${moneyFormatter.format(sale.total)} ${state.settings.currency}\n\nشكراً لزيارتكم!`;
-    sendWhatsAppMessage(sale.customerPhone, text);
+    sendWhatsAppMessage(sale.customerPhone, whatsappReceiptText(sale));
+  }
+
+  function whatsappReceiptText(sale) {
+    const settings = state.settings || {};
+    const store = settings.storeName || "Abo Omar Store";
+    const currency = settings.currency || "ج.م";
+    const fmt = value => `${moneyFormatter.format(Number(value || 0))} ${currency}`;
+    const net = netSale(sale);
+    const returns = sale.returns || [];
+    const div = "━━━━━━━━━━━━━━━━━━";
+    const thin = "━━━━━━━━━━━━━━━";
+    const lines = [];
+
+    lines.push(`🏪 *${store}*`);
+    lines.push("فاتورة مبيعات");
+    lines.push(div);
+    lines.push(`🧾 *رقم الفاتورة:* ${sale.number || "—"}`);
+    lines.push(`📅 *التاريخ:* ${sale.date ? dateTime(sale.date) : "—"}`);
+    lines.push(`💳 *طريقة الدفع:* ${sale.paymentMethod || "نقداً"}`);
+    lines.push(`👤 *العميل:* ${sale.customerName || "عميل نقدي"}`);
+    if (sale.customerPhone) lines.push(`📞 *الهاتف:* ${sale.customerPhone}`);
+    lines.push(div);
+    lines.push("*الأصناف:*");
+    (sale.items || []).forEach((item, index) => {
+      const meta = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
+      const name = meta ? `${item.name} (${meta})` : item.name;
+      lines.push(`${index + 1}) *${name}*`);
+      lines.push(`   ${item.qty} × ${fmt(item.price)} = ${fmt(item.total)}`);
+    });
+    lines.push(div);
+    lines.push(`المجموع الفرعي: ${fmt(sale.subtotal)}`);
+    if (Number(sale.discount || 0) > 0) lines.push(`الخصم: −${fmt(sale.discount)}`);
+    if (!sale.taxFree) lines.push(`ضريبة ${settings.taxRate || 0}%: ${fmt(sale.tax)}`);
+    if (Number(sale.shipping || 0) > 0) lines.push(`مصاريف الشحن: ${fmt(sale.shipping)}`);
+    if (net.returnAmount > 0) lines.push(`المجموع المرتجع: −${fmt(net.returnAmount)}`);
+    lines.push(thin);
+    lines.push("*الإجمالي النهائي:*");
+    lines.push(`*${fmt(net.total)}*`);
+    if (net.total > 0) {
+      lines.push(thin);
+      lines.push("*المبلغ بالحروف:*");
+      lines.push(amountInWords(net.total));
+    }
+    if (returns.length) {
+      lines.push(div);
+      lines.push("_المرتجعات:_");
+      returns.forEach(ret => {
+        lines.push(`• ${dateTime(ret.date)}${ret.reason ? ` — ${ret.reason}` : ""} : −${fmt(ret.total)}`);
+        (ret.items || []).forEach(item => lines.push(`   × ${item.qty} ${item.name} = ${fmt(item.total)}`));
+      });
+    }
+    lines.push(div);
+    const comp = companyInfoLines();
+    if (comp.length) {
+      lines.push("*للاتصال:*");
+      lines.push(...comp);
+    }
+    lines.push("");
+    lines.push("شكراً لزيارتكم! 🌹");
+    return lines.join("\n");
   }
 
   function shareDebtWhatsApp(customerName) {
@@ -5847,24 +5904,50 @@ function isRecentTap(el) {
   async function resolveLogoForPdf() {
     const logo = state.settings.logo;
     if (!logo) return null;
-    if (logo.startsWith("data:")) return logo;
+    let src = logo;
+    if (!logo.startsWith("data:")) {
+      try {
+        const response = await fetch(logo);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const blob = await response.blob();
+        src = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        return window.FALLBACK_LOGO || null;
+      }
+    }
     try {
-      const response = await fetch(logo);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      const image = new Image();
+      image.src = src;
+      await image.decode();
+      const nativeW = image.naturalWidth || 1;
+      const nativeH = image.naturalHeight || 1;
+      const maxW = 800;
+      const maxH = 240;
+      const scale = Math.min(1, maxW / nativeW, maxH / nativeH);
+      const width = Math.max(1, Math.round(nativeW * scale));
+      const height = Math.max(1, Math.round(nativeH * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(image, 0, 0, width, height);
+      const out = canvas.toDataURL("image/png");
+      if (!out || !out.startsWith("data:image/png")) throw new Error("logo conversion failed");
+      return out;
     } catch (err) {
       return window.FALLBACK_LOGO || null;
     }
   }
 
   async function resolveThumbForPdf(src, size = 60, name = "", shape = "square") {
-    if (!src && !name) return null;
     if (src) {
       try {
         const image = new Image();
@@ -6226,6 +6309,113 @@ function isRecentTap(el) {
     const lin = v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
     const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
     return luminance < 0.4;
+  }
+
+  const PDF_DESIGN = {
+    dark: "#0f172a",
+    secondary: "#475569",
+    muted: "#64748b",
+    border: "#e2e8f0",
+    softBorder: "#f1f5f9",
+    background: "#f8fafc",
+    danger: "#dc2626",
+    white: "#ffffff"
+  };
+
+  function pdfTable(body, widths, opts = {}) {
+    const node = {
+      table: {
+        headerRows: opts.headerRows || 0,
+        widths: widths || (body && body[0] ? body[0].map(() => "*") : ["*"]),
+        body: body || []
+      }
+    };
+    if (opts.layout) node.layout = opts.layout;
+    if (opts.margin) node.margin = opts.margin;
+    if (opts.unbreakable) node.unbreakable = opts.unbreakable;
+    return node;
+  }
+
+  function pdfTableLayoutPlain(lineColor) {
+    const lColor = lineColor || PDF_DESIGN.border;
+    return {
+      defaultBorder: false,
+      hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.6 : 0.4,
+      hLineColor: () => lColor,
+      vLineWidth: () => 0,
+      paddingLeft: () => 5,
+      paddingRight: () => 5,
+      paddingTop: () => 3,
+      paddingBottom: () => 3
+    };
+  }
+
+  function pdfMoneyParts(value, opts = {}) {
+    const num = Number(value || 0);
+    const formatted = typeof moneyFormatter !== "undefined" ? moneyFormatter.format(num) : num.toFixed(2);
+    const curr = (typeof state !== "undefined" && state.settings && state.settings.currency) ? state.settings.currency : "";
+    return [
+      {
+        text: formatted,
+        bold: opts.bold !== false,
+        fontSize: opts.size || 9.5,
+        color: opts.color || PDF_DESIGN.dark
+      },
+      {
+        text: curr ? ` ${curr}` : "",
+        bold: false,
+        fontSize: Math.max(6, (opts.size || 9.5) - 1.5),
+        color: opts.currencyColor || (opts.color === PDF_DESIGN.danger ? PDF_DESIGN.danger : PDF_DESIGN.muted)
+      }
+    ];
+  }
+
+  function invoiceQrText(sale) {
+    if (!sale) return "";
+    const store = (typeof state !== "undefined" && state.settings && state.settings.storeName) || "Abo Omar Store";
+    const num = sale.number || "";
+    const date = sale.date ? dateTime(sale.date) : new Date().toISOString();
+    const net = typeof netSale === "function" ? netSale(sale) : { total: sale.total || 0 };
+    const total = typeof moneyFormatter !== "undefined" ? moneyFormatter.format(Number(net.total || 0)) : Number(net.total || 0).toFixed(2);
+    const curr = (typeof state !== "undefined" && state.settings && state.settings.currency) || "";
+    return `فاتورة: ${num}\nالمتجر: ${store}\nالتاريخ: ${date}\nالمجموع: ${total} ${curr}`;
+  }
+
+  async function qrDataUrl(text, size = 200) {
+    if (!text) return null;
+    if (typeof window !== "undefined" && !window.qrcode) {
+      try {
+        await loadScriptList([
+          "assets/vendor/qrcode.min.js",
+          "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"
+        ]);
+      } catch (e) {
+        console.warn("Could not load qrcode library:", e);
+      }
+    }
+    const qrcodeFn = typeof window !== "undefined" ? window.qrcode : (typeof qrcode !== "undefined" ? qrcode : null);
+    if (typeof qrcodeFn !== "function") return null;
+    try {
+      const qr = qrcodeFn(0, "M");
+      qr.addData(String(text), "Byte");
+      qr.make();
+      const count = qr.getModuleCount();
+      const cellSize = Math.max(2, Math.floor((size - 8) / count));
+      const gifDataUrl = qr.createDataURL(cellSize, 4);
+      const image = new Image();
+      image.src = gifDataUrl;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth || size;
+      canvas.height = image.naturalHeight || size;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+      context.drawImage(image, 0, 0);
+      return canvas.toDataURL("image/png");
+    } catch (err) {
+      console.warn("QR creation error:", err);
+      return null;
+    }
   }
 
   async function buildInvoiceDoc(sale, logo) {
@@ -7978,23 +8168,7 @@ const grandRowInCard = {
   }
 
   function invoiceText(sale) {
-    const net = netSale(sale);
-    const lines = [
-      state.settings.storeName,
-      sale.number,
-      dateTime(sale.date),
-      `العميل: ${sale.customerName}`,
-      ...sale.items.map(item => `${item.name} x${item.qty} = ${moneyFormatter.format(Number(item.total || 0))} ${state.settings.currency}`),
-      sale.shipping ? `مصاريف الشحن: ${moneyFormatter.format(Number(sale.shipping || 0))} ${state.settings.currency}` : null,
-      ...((sale.returns || []).length ? [
-        `المرتجعات: ${net.qty > 0 ? "جزئية" : "كاملة"}`,
-        ...sale.returns.flatMap(ret => ret.items.map(item => `مرتجع: ${item.name} x${item.qty} = ${moneyFormatter.format(Number(item.total || 0))} ${state.settings.currency}`))
-      ] : []),
-      `الإجمالي: ${moneyFormatter.format(Number(net.total || 0))} ${state.settings.currency}`,
-      amountInWords(net.total),
-      ...companyInfoLines()
-    ].filter(Boolean);
-    return lines.join("\n");
+    return whatsappReceiptText(sale);
   }
 
   async function saveSettings(event) {
