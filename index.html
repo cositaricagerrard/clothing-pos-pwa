@@ -128,6 +128,13 @@
   <dialog class="dialog invoice-dialog" id="invoiceDialog">
     <section class="dialog-panel invoice-shell">
       <div id="invoicePrintArea"></div>
+      <div class="inv-preview-toolbar no-print" aria-label="أدوات حجم المعاينة">
+        <span class="inv-preview-toolbar-label">حجم المعاينة</span>
+        <button class="chip ghost" id="invZoomOut" type="button" title="تصغير الفاتورة">−</button>
+        <span class="inv-preview-toolbar-val" id="invZoomValue">100%</span>
+        <button class="chip ghost inv-preview-fit-btn" id="invZoomFit" type="button" title="ملاءمة الفاتورة كاملة داخل الشاشة">ملاءمة</button>
+        <button class="chip ghost" id="invZoomIn" type="button" title="تكبير الفاتورة">+</button>
+      </div>
       <footer class="dialog-actions no-print invoice-actions">
         <div class="inv-actions-secondary" aria-label="خيارات إضافية">
           <button class="chip ghost" id="returnInvoiceButton" type="button">استرجاع</button>
@@ -380,7 +387,8 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="assets/default-logo.js"></script>
-  <script src="app.js?v=20260827-fix6"></script>
+  <script src="assets/vendor/zxing.min.js"></script>
+  <script src="app.js?v=20260919-pdfnumfix"></script>
   <script>
     window.addEventListener("load", function () {
       window.setTimeout(function () {

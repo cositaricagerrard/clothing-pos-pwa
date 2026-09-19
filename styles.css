@@ -1729,6 +1729,51 @@ button.danger:not(.ghost):focus-visible {
   flex: 0 1 auto;
 }
 
+.inv-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 4px 2px;
+}
+
+.inv-preview-toolbar-label {
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--muted);
+  margin-inline-end: 2px;
+}
+
+.inv-preview-toolbar .chip {
+  padding: 6px 14px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.inv-preview-toolbar .inv-preview-fit-btn {
+  min-width: 84px;
+}
+
+.inv-preview-toolbar-val {
+  min-width: 52px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--color-primary, #5b6cff);
+  font-variant-numeric: tabular-nums;
+}
+
+.invoice-shell > #invoicePrintArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.invoice-shell > #invoicePrintArea > .invoice-paper,
+.invoice-shell > #invoicePrintArea > .thermal-receipt {
+  flex: 0 0 auto;
+}
+
 .inv-actions-primary button.primary {
   flex: 1.4 1 auto;
   font-weight: 800;
@@ -3842,6 +3887,8 @@ img[data-product-zoom] {
   #invoicePrintArea .invoice-paper {
     background: #fff !important;
     color: #172033 !important;
+    zoom: none !important;
+    transform: none !important;
   }
 
   #invoicePrintArea .invoice-paper .cart-totals {
@@ -4578,6 +4625,77 @@ img[data-product-zoom] {
 .rpt-empty-icon {
   font-size: 40px;
   opacity: 0.8;
+}
+
+/* حالة عدم تحديد الفترة الزمنية */
+.rpt-no-date-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 56px 24px;
+  text-align: center;
+  background: var(--card-bg, #fff);
+  border: 1px dashed var(--border, rgba(0,0,0,0.12));
+  border-radius: 16px;
+}
+
+.rpt-no-date-illustration {
+  font-size: 56px;
+  opacity: 0.9;
+  animation: rptNoDateFloat 2.6s ease-in-out infinite;
+}
+
+@keyframes rptNoDateFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.rpt-no-date-card h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: bold;
+  color: var(--ink);
+}
+
+.rpt-no-date-card p {
+  margin: 0;
+  max-width: 520px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.rpt-no-date-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.rpt-no-date-btn {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--color-primary, #5b6cff);
+  color: #fff;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.rpt-no-date-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+}
+
+.rpt-export-actions-disabled {
+  opacity: 0.6;
 }
 
 /* --- التجاوب للشاشات الصغيرة والمتوسطة لشاشة التقارير --- */

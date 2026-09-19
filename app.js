@@ -11,7 +11,8 @@
     expenses: "clothing-pos.expenses.v1",
     payments: "clothing-pos.payments.v1",
     customers: "clothing-pos.customers.v1",
-    deletedSales: "clothing-pos.deletedSales.v1"
+    deletedSales: "clothing-pos.deletedSales.v1",
+    invoiceZoom: "clothing-pos.invoiceZoom.v1"
   };
   const IDB_NAME = "clothing-pos-db";
   const IDB_STORE = "kv";
@@ -121,6 +122,31 @@
   const toast = document.getElementById("toast");
   const imagePreviewDialog = document.getElementById("imagePreviewDialog");
 
+  let _invZoomFit = null;
+  let _invZoomMul = loadInvoiceZoomPref();
+
+  function loadInvoiceZoomPref() {
+    try {
+      const raw = localStorage.getItem(STORAGE.invoiceZoom);
+      const val = raw ? parseFloat(raw) : 1;
+      return Number.isFinite(val) && val > 0 ? Math.min(2.5, Math.max(0.6, val)) : 1;
+    } catch (error) {
+      return 1;
+    }
+  }
+
+  function saveInvoiceZoomPref() {
+    try {
+      localStorage.setItem(STORAGE.invoiceZoom, String(_invZoomMul));
+    } catch (error) {
+      /* ignore */
+    }
+  }
+
+  function saleTaxFreeDefault() {
+    return !!state.settings.allowTaxFree;
+  }
+
   const SPLASH_MIN_MS = 950;
   let _splashStartedAt = 0;
 
@@ -187,7 +213,8 @@
     await Promise.resolve(saveAll());
     if (/[?&]demo=1(&|$)/.test(location.search)) seedDemoData();
     applySettings();
-    loadSession();
+    const hadSession = loadSession();
+    if (!hadSession) state._saleTaxFree = saleTaxFreeDefault();
     state.view = viewFromHash() || "dashboard";
     if (!viewFromHash()) {
       try {
@@ -331,6 +358,8 @@
   // 3. ماسح الباركود بالكاميرا (Camera Scanner)
   let _scannerStream = null;
   let _scannerAnimFrame = null;
+  let _scannerReader = null;
+  let _scannerControls = null;
 
   async function startCameraScanner(onSuccessCallback) {
     const dialog = document.getElementById("scannerDialog");
@@ -372,8 +401,27 @@
           _scannerAnimFrame = requestAnimationFrame(scanFrame);
         };
         _scannerAnimFrame = requestAnimationFrame(scanFrame);
+      } else if (window.ZXing && window.ZXing.BrowserMultiFormatReader) {
+        const codeReader = new window.ZXing.BrowserMultiFormatReader();
+        if (typeof codeReader.reset === "function") codeReader.reset();
+        const readerErr = err => {
+          if (status) status.textContent = "تعذر تشغيل التعرف على الباركود: " + (err && err.message ? err.message : String(err));
+        };
+        try {
+          _scannerReader = codeReader;
+          _scannerControls = codeReader.decodeFromVideoElement(video, (result, err, controls) => {
+            if (err) return; /* ignore empty frames */
+            if (result && result.getText) {
+              try { if (controls && controls.stop) controls.stop(); } catch (e) { /* ignore */ }
+              triggerScanSuccess(result.getText(), onSuccessCallback);
+            }
+          });
+          if (status) status.textContent = "وجه الكاميرا نحو الباركود للتعرف عليه...";
+        } catch (e) {
+          readerErr(e);
+        }
       } else {
-        if (status) status.textContent = "الكاميرا تعمل (أدخل الباركود أو استخدم ماسح خفيف)";
+        if (status) status.textContent = "الكاميرا تعمل (أدخل الباركود يدوياً في صفحة المنتجات أو البيع)";
       }
     } catch (err) {
       if (status) status.textContent = "تعذر فتح الكاميرا: " + (err.message || "تأكد من إذن الكاميرا");
@@ -404,6 +452,14 @@
     if (_scannerAnimFrame) {
       cancelAnimationFrame(_scannerAnimFrame);
       _scannerAnimFrame = null;
+    }
+    if (_scannerControls && typeof _scannerControls.stop === "function") {
+      try { _scannerControls.stop(); } catch (e) { /* ignore */ }
+      _scannerControls = null;
+    }
+    if (_scannerReader && typeof _scannerReader.reset === "function") {
+      try { _scannerReader.reset(); } catch (e) { /* ignore */ }
+      _scannerReader = null;
     }
     if (_scannerStream) {
       _scannerStream.getTracks().forEach(track => track.stop());
@@ -984,6 +1040,13 @@ function isRecentTap(el) {
     document.getElementById("cancelExitButton").addEventListener("click", cancelExitApp);
     document.getElementById("confirmExitButton").addEventListener("click", confirmExitApp);
 
+    const topbarScanBtn = document.getElementById("topbarScanBtn");
+    if (topbarScanBtn) topbarScanBtn.addEventListener("click", () => startCameraScanner());
+    const closeScannerBtn = document.getElementById("closeScannerBtn");
+    if (closeScannerBtn) closeScannerBtn.addEventListener("click", stopCameraScanner);
+    const cancelScannerBtn = document.getElementById("cancelScannerBtn");
+    if (cancelScannerBtn) cancelScannerBtn.addEventListener("click", stopCameraScanner);
+
     productForm.addEventListener("submit", saveProductFromForm);
     document.getElementById("productImage").addEventListener("change", previewProductImage);
     document.getElementById("deleteProductButton").addEventListener("click", deleteProductFromForm);
@@ -1060,6 +1123,16 @@ function isRecentTap(el) {
     });
     const thermalPreviewBtn = document.getElementById("thermalPreviewToggle");
     if (thermalPreviewBtn) thermalPreviewBtn.addEventListener("click", toggleThermalPreview);
+    const invZoomIn = document.getElementById("invZoomIn");
+    if (invZoomIn) invZoomIn.addEventListener("click", () => zoomInvoicePreview(1));
+    const invZoomOut = document.getElementById("invZoomOut");
+    if (invZoomOut) invZoomOut.addEventListener("click", () => zoomInvoicePreview(-1));
+    const invZoomFit = document.getElementById("invZoomFit");
+    if (invZoomFit) invZoomFit.addEventListener("click", () => fitInvoicePreview(true));
+    window.addEventListener("resize", () => {
+      if (invoiceDialog.open && state.currentInvoiceId) fitInvoicePreview();
+    });
+    invoicePrintArea.addEventListener("load", () => fitInvoicePreview(), true);
     document.getElementById("returnInvoiceButton").addEventListener("click", openReturnDialog);
     document.getElementById("deleteInvoiceButton").addEventListener("click", deleteInvoice);
     document.getElementById("confirmReturnButton").addEventListener("click", confirmReturn);
@@ -1491,7 +1564,7 @@ function isRecentTap(el) {
               <input id="taxFreeToggle" type="checkbox"${state._saleTaxFree ? " checked" : ""}>
               <span>
                 <strong>بدون ضريبة لهذه الفاتورة</strong>
-                <small>يُصدر الإجمالي دون احتساب الضريبة ${state.settings.taxRate}%.</small>
+                <small>مفعّل افتراضياً — أزل التحديد لإضافة الضريبة ${state.settings.taxRate}% لهذه الفاتورة.</small>
               </span>
             </label>` : ""}
           </div>
@@ -2373,14 +2446,20 @@ function isRecentTap(el) {
             <h1 class="rpt-hero-title">${typeInfo.icon} ${typeInfo.label}</h1>
             <p class="rpt-hero-subtitle">${typeInfo.desc} — ${reportPeriodLabel()}</p>
           </div>
-          <div class="rpt-export-actions">
-            <button class="rpt-btn-export rpt-btn-pdf" id="exportReportPdfBtn" type="button" title="تحميل تقرير PDF منسق للطباعة والحفظ">
-              <span style="font-size:18px">📄</span> تصدير PDF احترافي
-            </button>
-            <button class="rpt-btn-export rpt-btn-excel" id="exportReportExcelBtn" type="button" title="تصدير جدول البيانات إلى ملف Excel مع المعادلات والتنسيق">
-              <span style="font-size:18px">📊</span> تصدير Excel احترافي
-            </button>
-          </div>
+          ${reportHasDateRange() ? `
+            <div class="rpt-export-actions">
+              <button class="rpt-btn-export rpt-btn-pdf" id="exportReportPdfBtn" type="button" title="تحميل تقرير PDF منسق للطباعة والحفظ">
+                <span style="font-size:18px">📄</span> تصدير PDF احترافي
+              </button>
+              <button class="rpt-btn-export rpt-btn-excel" id="exportReportExcelBtn" type="button" title="تصدير جدول البيانات إلى ملف Excel مع المعادلات والتنسيق">
+                <span style="font-size:18px">📊</span> تصدير Excel احترافي
+              </button>
+            </div>
+          ` : `
+            <div class="rpt-export-actions rpt-export-actions-disabled" title="حدد فترة زمنية أولاً لتمكين التصدير">
+              <span style="font-size:13px;color:var(--muted)">🔒 حدد الفترة الزمنية لتفعيل التصدير</span>
+            </div>
+          `}
         </header>
 
         <!-- شبكة اختيار نوع التقرير (11 نوع) -->
@@ -2454,14 +2533,38 @@ function isRecentTap(el) {
         </section>
 
         <!-- بطاقات المؤشرات الحية Dynamic KPIs -->
-        ${rptKpiGridHtml(currentType)}
+        ${reportHasDateRange() ? `
+          ${rptKpiGridHtml(currentType)}
 
-        <!-- قسم التحليلات البصرية Visual Analytics -->
-        ${rptVisualSectionHtml(currentType)}
+          <!-- قسم التحليلات البصرية Visual Analytics -->
+          ${rptVisualSectionHtml(currentType)}
 
-        <!-- جدول البيانات التفاعلي -->
-        ${rptDataTableSectionHtml(currentType)}
+          <!-- جدول البيانات التفاعلي -->
+          ${rptDataTableSectionHtml(currentType)}
+        ` : rptNoDateEmptyState()}
       </div>
+    `;
+  }
+
+  function reportHasDateRange() {
+    return Boolean(state._reportFrom) || Boolean(state._reportTo);
+  }
+
+  function rptNoDateEmptyState() {
+    return `
+      <section class="rpt-no-date-card">
+        <div class="rpt-no-date-illustration">🗓️</div>
+        <h2>حدد الفترة الزمنية أولاً</h2>
+        <p>لا يتم عرض أي بيانات حتى تقوم بتحديد نطاق تاريخ للتقرير. اختر فترة من الحقول بالأعلى أو استخدم إحدى الفترات السريعة:</p>
+        <div class="rpt-no-date-actions">
+          <button class="rpt-no-date-btn" data-report-preset="today" type="button">📅 اليوم</button>
+          <button class="rpt-no-date-btn" data-report-preset="yesterday" type="button">🕘 أمس</button>
+          <button class="rpt-no-date-btn" data-report-preset="week" type="button">🗓️ آخر 7 أيام</button>
+          <button class="rpt-no-date-btn" data-report-preset="month" type="button">📆 هذا الشهر</button>
+          <button class="rpt-no-date-btn" data-report-preset="month30" type="button">📊 آخر 30 يوم</button>
+          <button class="rpt-no-date-btn" data-report-preset="year" type="button">📈 هذا العام</button>
+        </div>
+      </section>
     `;
   }
 
@@ -2479,7 +2582,7 @@ function isRecentTap(el) {
     }
     if (state._reportFrom) return `من ${state._reportFrom} حتى الآن`;
     if (state._reportTo) return `حتى ${state._reportTo}`;
-    return "كامل السجلات (بدون تحديد)";
+    return "يرجى تحديد الفترة الزمنية لعرض البيانات";
   }
 
   function activePresetKey() {
@@ -3463,7 +3566,7 @@ function isRecentTap(el) {
               <input id="allowTaxFree" type="checkbox" ${state.settings.allowTaxFree ? "checked" : ""}>
               <span>
                 <strong>السماح بفاتورة بدون ضريبة</strong>
-                <small>عند تفعيلها يظهر خيار في شاشة البيع لإصدار الفاتورة معفاة من الضريبة عند الحاجة.</small>
+                <small>عند تفعيلها تصدر الفواتير الجديدة معفاة من الضريبة (${state.settings.taxRate}%) افتراضياً، مع إمكانية إلغاء الإعفاء لكل فاتورة على حدة من شاشة البيع.</small>
               </span>
             </label>
             <label>نص أسفل الفاتورة <textarea id="invoiceFooter">${escapeHtml(state.settings.invoiceFooter)}</textarea></label>
@@ -4266,6 +4369,7 @@ function isRecentTap(el) {
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const image = new Image();
+      image.crossOrigin = "anonymous";
       image.onload = () => resolve(image);
       image.onerror = reject;
       image.src = src;
@@ -4608,7 +4712,7 @@ function isRecentTap(el) {
     state.cart = [];
     state._saleDiscount = 0;
     state._saleShipping = 0;
-    state._saleTaxFree = false;
+    state._saleTaxFree = saleTaxFreeDefault();
     saveSession();
     render();
     showInvoice(sale.id);
@@ -4621,6 +4725,73 @@ function isRecentTap(el) {
     state.currentInvoiceId = saleId;
     invoicePrintArea.innerHTML = invoiceHtml(sale);
     invoiceDialog.showModal();
+    fitInvoicePreview();
+  }
+
+  function fitInvoicePreview(restoreFit = false) {
+    const area = invoicePrintArea;
+    const paper = area.querySelector(".invoice-paper, .thermal-receipt");
+    if (!paper || !area.offsetParent) return;
+    if (_capturingInvoice) return;
+
+    if (restoreFit) {
+      _invZoomMul = 1;
+      saveInvoiceZoomPref();
+    }
+    paper.style.zoom = "";
+    const naturalW = paper.offsetWidth;
+    const naturalH = paper.offsetHeight;
+    if (!naturalW || !naturalH) return;
+
+    const padX = 24;
+    const padY = 20;
+    const availW = Math.max(60, area.clientWidth - padX);
+    const availH = Math.max(60, area.clientHeight - padY);
+
+    let fitScale = Math.min(1, availW / naturalW, availH / naturalH);
+    fitScale = Math.max(fitScale, 0.2);
+    _invZoomFit = fitScale;
+
+    applyInvoiceZoom();
+
+    // تصحيح ثانوي للتخلص من أي تجاوز ناتج عن الحشوات الداخلية
+    if (area.scrollHeight > area.clientHeight + 2 || area.scrollWidth > area.clientWidth + 2) {
+      const corr = Math.min(
+        area.clientWidth > 0 ? area.clientWidth / area.scrollWidth : 1,
+        area.clientHeight > 0 ? area.clientHeight / area.scrollHeight : 1
+      );
+      _invZoomFit = Math.max(_invZoomFit * corr, 0.2);
+      applyInvoiceZoom();
+    }
+  }
+
+  function applyInvoiceZoom() {
+    const area = invoicePrintArea;
+    const paper = area.querySelector(".invoice-paper, .thermal-receipt");
+    if (!paper) return;
+    let fitScale = _invZoomFit;
+    if (fitScale === null) {
+      const naturalW = paper.offsetWidth;
+      const naturalH = paper.offsetHeight;
+      if (!naturalW || !naturalH) return;
+      fitScale = Math.max(Math.min(1, Math.max(60, area.clientWidth - 24) / naturalW, Math.max(60, area.clientHeight - 20) / naturalH), 0.2);
+      _invZoomFit = fitScale;
+    }
+    const eff = Math.min(2, Math.max(0.2, fitScale * _invZoomMul));
+    paper.style.zoom = String(eff);
+    paper.style.margin = "0 auto";
+    updateInvoiceZoomLabel();
+  }
+
+  function updateInvoiceZoomLabel() {
+    const el = document.getElementById("invZoomValue");
+    if (el) el.textContent = Math.round(_invZoomMul * 100) + "%";
+  }
+
+  function zoomInvoicePreview(delta) {
+    _invZoomMul = Math.min(2.5, Math.max(0.6, _invZoomMul * (delta < 0 ? 0.8 : 1.25)));
+    saveInvoiceZoomPref();
+    applyInvoiceZoom();
   }
 
   function formatDateDisplay(date) {
@@ -5162,6 +5333,92 @@ function isRecentTap(el) {
     if (forcedLight) document.documentElement.dataset.theme = "light";
     try {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const prevZoom = node.style.zoom;
+      if (prevZoom) node.style.zoom = "";
+      try {
+        await preprocessInvoiceImages(node);
+        return await html2canvas(node, {
+          scale,
+          useCORS: true,
+          allowTaint: false,
+          logging: false,
+          backgroundColor: "#ffffff"
+        });
+      } finally {
+        if (prevZoom) node.style.zoom = prevZoom;
+      }
+    } finally {
+      if (forcedLight) document.documentElement.dataset.theme = prevTheme;
+    }
+  }
+
+  let _capturingInvoice = false;
+
+  async function imageToDataUrl(src) {
+    if (!src || src.startsWith("data:")) return src;
+    try {
+      const response = await fetch(src, { mode: "cors" });
+      if (!response.ok) throw new Error("fetch failed");
+      const blob = await response.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      try {
+        const response = await fetch(src);
+        if (!response.ok) throw new Error("fetch failed");
+        const blob = await response.blob();
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err2) {
+        console.warn("Failed to convert image to data URL:", src, err2);
+        return null;
+      }
+    }
+  }
+
+  async function preprocessInvoiceImages(node) {
+    const images = node.querySelectorAll("img");
+    const convertPromises = Array.from(images).map(async (img) => {
+      const src = img.getAttribute("src");
+      if (!src || src.startsWith("data:")) return;
+      const dataUrl = await imageToDataUrl(src);
+      if (dataUrl) {
+        img.setAttribute("src", dataUrl);
+      } else {
+        img.removeAttribute("src");
+        img.style.display = "none";
+      }
+    });
+    await Promise.all(convertPromises);
+  }
+
+  async function renderInvoicePaperToCanvas(scale = 2) {
+    const area = invoicePrintArea;
+    const prevMarkup = area.innerHTML;
+    const sale = state.sales.find(item => item.id === state.currentInvoiceId);
+    if (!sale) throw new Error("لا توجد فاتورة للتصدير");
+    await loadHtml2CanvasLibrary();
+    await document.fonts.ready;
+    const prevTheme = document.documentElement.dataset.theme;
+    const forcedLight = prevTheme === "dark";
+    if (forcedLight) document.documentElement.dataset.theme = "light";
+    _capturingInvoice = true;
+    try {
+      area.innerHTML = invoiceHtml(sale);
+      const node = area.querySelector(".invoice-paper");
+      if (!node) throw new Error("تعذر تجهيز الفاتورة للتصدير");
+      node.style.zoom = "";
+      node.style.transform = "none";
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await preprocessInvoiceImages(node);
       return await html2canvas(node, {
         scale,
         useCORS: true,
@@ -5170,7 +5427,66 @@ function isRecentTap(el) {
         backgroundColor: "#ffffff"
       });
     } finally {
+      _capturingInvoice = false;
       if (forcedLight) document.documentElement.dataset.theme = prevTheme;
+      area.innerHTML = prevMarkup;
+    }
+  }
+
+  function pdfImageBlobFromCanvas(canvas) {
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const pageMargins = [38, 42, 38, 58];
+    const contentW = pageWidth - pageMargins[0] - pageMargins[2];
+    const contentH = pageHeight - pageMargins[1] - pageMargins[3];
+    const slicePx = Math.ceil(canvas.width * (contentH / contentW));
+    const content = [];
+    let offsetY = 0;
+    let pageIndex = 0;
+    while (offsetY < canvas.height) {
+      const sliceHeight = Math.min(slicePx, canvas.height - offsetY);
+      const sliceCanvas = document.createElement("canvas");
+      sliceCanvas.width = canvas.width;
+      sliceCanvas.height = sliceHeight;
+      const ctx = sliceCanvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+      ctx.drawImage(canvas, 0, offsetY, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+      const imageHeight = Math.max(1, sliceHeight * (contentW / canvas.width) - 0.5);
+      content.push({
+        image: sliceCanvas.toDataURL("image/jpeg", 0.92),
+        width: contentW,
+        height: Math.min(contentH, imageHeight),
+        ...(pageIndex > 0 ? { pageBreak: "before" } : {})
+      });
+      offsetY += slicePx;
+      pageIndex += 1;
+    }
+    return pdfMake.createPdf({
+      pageSize: "A4",
+      pageMargins,
+      content
+    }).getBlob();
+  }
+
+  async function buildInvoiceImagePdfBlob() {
+    await loadPdfMakeLibrary();
+    const canvas = await renderInvoicePaperToCanvas(2);
+    return pdfImageBlobFromCanvas(canvas);
+  }
+
+  async function exportInvoiceImagePdf(filename) {
+    showPdfOverlay();
+    try {
+      const blob = await buildInvoiceImagePdfBlob();
+      triggerBlobDownload(blob, `${filename}.pdf`);
+      toastMessage("تم تحميل ملف PDF بنجاح");
+    } catch (err) {
+      console.error("PDF generation error:", err);
+      const detail = err && err.message ? err.message : String(err);
+      toastMessage(`حدث خطأ أثناء إنشاء ملف PDF: ${detail}`);
+    } finally {
+      hidePdfOverlay();
     }
   }
 
@@ -5307,17 +5623,20 @@ function isRecentTap(el) {
       state._thermalPreviewWidth = 80;
       invoicePrintArea.innerHTML = thermalInvoiceHtml(sale, 80);
       if (btn) btn.textContent = "معاينة حرارية 80";
+      fitInvoicePreview();
       return;
     }
     if (Number(state._thermalPreviewWidth) === 80) {
       state._thermalPreviewWidth = 58;
       invoicePrintArea.innerHTML = thermalInvoiceHtml(sale, 58);
       if (btn) btn.textContent = "معاينة حرارية 58";
+      fitInvoicePreview();
       return;
     }
     state._thermalPreviewWidth = null;
     invoicePrintArea.innerHTML = invoiceHtml(sale);
     if (btn) btn.textContent = "معاينة حرارية";
+    fitInvoicePreview();
   }
 
   function returnQtyFor(productId) {
@@ -5922,6 +6241,7 @@ function isRecentTap(el) {
     }
     try {
       const image = new Image();
+      image.crossOrigin = "anonymous";
       image.src = src;
       await image.decode();
       const nativeW = image.naturalWidth || 1;
@@ -5950,8 +6270,16 @@ function isRecentTap(el) {
   async function resolveThumbForPdf(src, size = 60, name = "", shape = "square") {
     if (src) {
       try {
+        let finalSrc = src;
+        if (src.startsWith("http://") || src.startsWith("https://")) {
+          const dataUrl = await imageToDataUrl(src);
+          if (dataUrl) finalSrc = dataUrl;
+        }
         const image = new Image();
-        image.src = src;
+        if ((finalSrc.startsWith("http://") || finalSrc.startsWith("https://")) && !finalSrc.startsWith("data:")) {
+          image.crossOrigin = "anonymous";
+        }
+        image.src = finalSrc;
         await image.decode();
         const canvas = document.createElement("canvas");
         canvas.width = size;
@@ -5970,7 +6298,7 @@ function isRecentTap(el) {
         const drawWidth = image.naturalWidth * scale;
         const drawHeight = image.naturalHeight * scale;
         ctx.drawImage(image, (size - drawWidth) / 2, (size - drawHeight) / 2, drawWidth, drawHeight);
-        return canvas.toDataURL("image/jpeg", 0.85);
+        return canvas.toDataURL("image/png");
       } catch (err) { /* canvas tainted أو فشل الرسم — نستخدم البلاطة الاحتياطية */ }
     }
     return placeholderThumbDataUrl(size, name, shape);
@@ -6443,7 +6771,7 @@ function isRecentTap(el) {
       if (headerStyle === "band" || headerStyle === "runway") return pdfAccent;
       if (headerStyle === "boutique") return pdfAccent;
       if (headerStyle === "atelier") return pdfAccent;
-      if (headerStyle === "dark-band") return "#1f1f1f";
+      if (headerStyle === "dark-band") return "#1c2430";
       return shadeHex(pdfAccent, 0.95);
     })();
     const headerOnDark = isDarkHex(headerFill);
@@ -6451,14 +6779,16 @@ function isRecentTap(el) {
     let qr = null;
     if (state.settings.showInvoiceQr !== false) {
       try {
-        qr = await qrDataUrl(invoiceQrText(sale), 220);
+        qr = await qrDataUrl(invoiceQrText(sale), 200);
       } catch (err) {
         console.warn("QR skipped:", err);
       }
     }
 
-    const contentW = compact ? 567 : 515;
-    const brandStack = [];
+    const pageM = compact ? [16, 16, 16, 20] : [26, 20, 26, 22];
+    const docContentW = 595.28 - pageM[0] - pageM[2];
+    const contentW = docContentW;
+
     const storeColor = headerOnDark
       ? (tpl.storeColor && !isDarkHex(tpl.storeColor) ? tpl.storeColor : "#ffffff")
       : pdfColor(tpl.storeColor, accent);
@@ -6466,46 +6796,90 @@ function isRecentTap(el) {
     const docTitleColor = headerOnDark ? "#ffffff" : pdfColor(tpl.sectionTitleColor, accent);
     const docMetaColor = headerOnDark ? "#d7e0de" : PDF_DESIGN.secondary;
     const badgeFill = headerOnDark ? "#ffffff" : pdfAccent;
-    const badgeText = headerOnDark ? accent : "#ffffff";
-    if (logo) brandStack.push({ image: logo, width: compact ? 40 : Math.min(tpl.logoSize || 54, 44), alignment: "center", margin: [0, 0, 0, compact ? 1 : 3] });
-    brandStack.push({ text: state.settings.storeName, fontSize: compact ? 14 : Math.min(tpl.storeSize || 18, 21), bold: true, font: tpl.storeFont || "CairoSemiBold", color: storeColor, alignment: "center" });
-    brandStack.push({ text: "متجر ملابس وأزياء", fontSize: 10, color: subColor, alignment: "center", margin: [0, compact ? 1 : 2, 0, 0] });
+    const badgeText = headerOnDark ? (headerStyle === "dark-band" ? "#1c2430" : accent) : "#ffffff";
+
+    const stInfo = invoiceStatusData(sale);
+    const statusBadge = {
+      table: {
+        headerRows: 0,
+        widths: ["auto"],
+        body: [[{
+          text: `${stInfo.label} · ${stInfo.sub}`,
+          fillColor: stInfo.bg,
+          color: stInfo.color,
+          font: "CairoSemiBold",
+          bold: true,
+          fontSize: compact ? 8 : 8.5,
+          alignment: "center",
+          margin: [6, 1.5, 6, 1.5]
+        }]]
+      },
+      layout: {
+        defaultBorder: true,
+        hLineWidth: () => 1,
+        vLineWidth: () => 1,
+        hLineColor: () => stInfo.color,
+        vLineColor: () => stInfo.color,
+        paddingLeft: () => 2,
+        paddingRight: () => 2,
+        paddingTop: () => 1,
+        paddingBottom: () => 1
+      },
+      margin: [0, 0, 0, 3]
+    };
 
     const numberBadge = {
       table: {
         headerRows: 0,
         widths: ["auto"],
-        body: [[{ text: sale.number, fillColor: badgeFill, color: badgeText, font: "CairoSemiBold", bold: true, fontSize: compact ? 9.5 : 11.5, alignment: "center", margin: [2, 1, 2, 1] }]]
+        body: [[{ text: sale.number, fillColor: badgeFill, color: badgeText, font: "CairoSemiBold", bold: true, fontSize: compact ? 9.5 : 10.5, alignment: "center", margin: [6, 1, 6, 1] }]]
       },
       layout: {
         defaultBorder: false,
-        paddingLeft: () => 10,
-        paddingRight: () => 10,
-        paddingTop: () => 4,
-        paddingBottom: () => 4
+        paddingLeft: () => 6,
+        paddingRight: () => 6,
+        paddingTop: () => 2,
+        paddingBottom: () => 2
       },
-      margin: [0, compact ? 2 : 4, 0, 0]
+      margin: [0, 2, 0, 2]
     };
 
     const docTitleStack = [
-      { text: "فاتورة مبيعات", fontSize: compact ? 15 : 20, bold: true, font: tpl.sectionTitleFont || "CairoSemiBold", color: docTitleColor, alignment: "left" },
+      statusBadge,
+      { text: "فاتورة مبيعات", fontSize: compact ? 15 : 18, bold: true, font: tpl.sectionTitleFont || "CairoSemiBold", color: docTitleColor, alignment: "left" },
       numberBadge,
-      { text: dateTime(sale.date), fontSize: 10, color: docMetaColor, alignment: "left", margin: [0, compact ? 2 : 3, 0, 0] },
-      ...(sale.paymentMethod ? [{ text: `طريقة الدفع: ${sale.paymentMethod}`, fontSize: 10, color: docMetaColor, alignment: "left", margin: [0, compact ? 1.5 : 3, 0, 0] }] : [])
+      { text: dateTime(sale.date), fontSize: 9.5, color: docMetaColor, alignment: "left", margin: [0, 1, 0, 0] },
+      ...(sale.paymentMethod ? [{ text: `طريقة الدفع: ${sale.paymentMethod}`, fontSize: 9.5, color: docMetaColor, alignment: "left", margin: [0, 1, 0, 0] }] : [])
     ];
+
+    const storeTextStack = {
+      stack: [
+        { text: state.settings.storeName, fontSize: compact ? 15 : Math.min(tpl.storeSize || 18, 22), bold: true, font: tpl.storeFont || "CairoSemiBold", color: storeColor, alignment: "right" },
+        { text: state.settings.storeSubtitle || "متجر ملابس وأزياء", fontSize: 9.5, color: subColor, alignment: "right", margin: [0, 2, 0, 0] }
+      ],
+      alignment: "right"
+    };
+
+    const logoSize = compact ? 40 : Math.min(tpl.logoSize || 50, 44);
+    const brandStack = logo ? {
+      columns: [
+        { image: logo, width: logoSize, height: logoSize, alignment: "left", margin: [0, 0, 10, 0] },
+        { ...storeTextStack, width: "*" }
+      ]
+    } : storeTextStack;
 
     const header = {
       layout: {
         defaultBorder: false,
-        paddingLeft: () => 18,
-        paddingRight: () => 18,
-        paddingTop: () => (compact ? 5.5 : 6.5),
-        paddingBottom: () => (compact ? 5.5 : 6.5)
+        paddingLeft: () => 16,
+        paddingRight: () => 16,
+        paddingTop: () => (compact ? 6 : 8),
+        paddingBottom: () => (compact ? 6 : 8)
       },
       table: { headerRows: 0, widths: ["*"], body: [[{ columns: [docTitleStack, brandStack], columnGap: 14, fillColor: headerFill }]] },
-      margin: [0, 0, 0, compact ? 4 : 6]
+      margin: [0, 0, 0, compact ? 3 : 5]
     };
-    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: contentW, y2: 0, lineWidth: tpl.ruleThickness || 1.2, lineColor: pdfColor(tpl.ruleColor, accent) }], margin: [0, 0, 0, compact ? 3 : 5] };
+    const headerRule = { canvas: [{ type: "line", x1: 0, y1: 0, x2: contentW, y2: 0, lineWidth: tpl.ruleThickness || 1.2, lineColor: pdfColor(tpl.ruleColor, accent) }], margin: [0, 0, 0, compact ? 4 : 6] };
 
     const metaTitleColor = pdfColor(tpl.metaTitleColor, accent);
     const metaLabelColor = pdfColor(tpl.metaLabelColor, "#475569");
@@ -6516,7 +6890,7 @@ function isRecentTap(el) {
       if (metaStyle === "rose") return tpl.pdfLight || "#fdf0f5";
       if (metaStyle === "sand") return tpl.pdfLight || "#f7f1e7";
       if (metaStyle === "mint") return tpl.pdfLight || "#ecfdf9";
-      if (metaStyle === "gold") return null;
+      if (metaStyle === "gold") return "#f9f6f0";
       if (metaStyle === "plain") return null;
       return "#F8FAFC";
     })();
@@ -6525,26 +6899,13 @@ function isRecentTap(el) {
       if (metaStyle === "rose") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#f4bfd4";
       if (metaStyle === "sand") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#ded2bd";
       if (metaStyle === "mint") return tpl.pdfAccent ? shadeHex(tpl.pdfAccent, 0.7) : "#99f6e4";
-      if (metaStyle === "gold") return tpl.gold || "#b08d57";
+      if (metaStyle === "gold") return "#e5d8c0";
       if (metaStyle === "plain") return "#ffffff";
       return "#E5E7EB";
     })();
 
     const infoSection = (() => {
-      const infoW = compact ? 11.5 : 13;
-      const infoH = () => 0.4;
       const infoLineColor = metaBorderColor || PDF_DESIGN.border;
-      const infoLayout = {
-        defaultBorder: false,
-        hLineWidth: infoH,
-        hLineColor: () => infoLineColor,
-        vLineWidth: () => 0.4,
-        vLineColor: () => infoLineColor,
-        paddingLeft: () => compact ? 3 : 4,
-        paddingRight: () => compact ? 3 : 4,
-        paddingTop: () => compact ? 2.5 : 3,
-        paddingBottom: () => compact ? 2.5 : 3
-      };
       const invRows = [
         ["التاريخ", dateTime(sale.date)],
         ["طريقة الدفع", sale.paymentMethod || "نقدا"],
@@ -6556,30 +6917,40 @@ function isRecentTap(el) {
       ];
       const buildCard = (title, rows) => ({
         layout: {
-          defaultBorder: false,
-          hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 0.6 : 0,
+          defaultBorder: true,
+          hLineWidth: () => 0.6,
           hLineColor: () => infoLineColor,
-          vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length) ? 0.6 : 0,
+          vLineWidth: () => 0.6,
           vLineColor: () => infoLineColor,
-          paddingLeft: () => compact ? 10 : 13,
-          paddingRight: () => compact ? 10 : 13,
-          paddingTop: () => compact ? 6 : 8,
-          paddingBottom: () => compact ? 6 : 8
+          paddingLeft: () => (compact ? 8 : 10),
+          paddingRight: () => (compact ? 8 : 10),
+          paddingTop: () => (compact ? 5 : 6),
+          paddingBottom: () => (compact ? 5 : 6)
         },
         table: {
           headerRows: 0,
           widths: ["*"],
           body: [[{
             stack: [
-              { text: title, fontSize: compact ? 11 : 14, bold: true, font: "CairoSemiBold", color: metaTitleColor, margin: [0, 0, 0, compact ? 3 : 5] },
+              { text: title, fontSize: compact ? 10 : 12, bold: true, font: "CairoSemiBold", color: metaTitleColor, margin: [0, 0, 0, compact ? 3 : 4], alignment: "right" },
               {
-                layout: infoLayout,
+                layout: {
+                  defaultBorder: true,
+                  hLineWidth: () => 0.4,
+                  hLineColor: () => infoLineColor,
+                  vLineWidth: () => 0.4,
+                  vLineColor: () => infoLineColor,
+                  paddingLeft: () => 5,
+                  paddingRight: () => 5,
+                  paddingTop: () => (compact ? 2 : 2.5),
+                  paddingBottom: () => (compact ? 2 : 2.5)
+                },
                 table: {
                   headerRows: 0,
-                  widths: ["auto", "*"],
+                  widths: ["*", 62],
                   body: rows.map(([label, value]) => [
-                    { text: label, color: metaLabelColor || PDF_DESIGN.secondary, fontSize: compact ? 8.5 : 10, alignment: "right" },
-                    { text: String(value), bold: true, font: "CairoSemiBold", fontSize: compact ? 9 : 11.5, color: metaValueColor || PDF_DESIGN.dark, alignment: "left" }
+                    { text: String(value), bold: true, font: "CairoSemiBold", fontSize: compact ? 8.5 : 9.5, color: metaValueColor || PDF_DESIGN.dark, alignment: "left" },
+                    { text: label, color: metaLabelColor || PDF_DESIGN.secondary, fontSize: compact ? 8 : 9, alignment: "right" }
                   ])
                 },
                 margin: [0, 0, 0, 0]
@@ -6591,44 +6962,59 @@ function isRecentTap(el) {
       });
       return {
         columns: [
-          { width: "*", ...buildCard("بيانات الفاتورة", invRows) },
-          { width: "*", ...buildCard("بيانات العميل", custRows) }
+          { width: "*", ...buildCard("بيانات العميل", custRows) },
+          { width: "*", ...buildCard("بيانات الفاتورة", invRows) }
         ],
-        columnGap: 12,
-        margin: [0, compact ? 2 : 4, 0, compact ? 2 : 4]
+        columnGap: 10,
+        margin: [0, compact ? 2 : 3, 0, compact ? 2 : 4]
       };
     })();
 
-    const itemsHeaderColor = pdfColor(tpl.sectionTitleColor, accent);
+    const thBg = (() => {
+      if (tpl.headerStyle === "dark-band") return "#1c2430";
+      if (tpl.headerBar && tpl.headerBar.fill) return tpl.headerBar.fill;
+      return pdfAccent;
+    })();
+    const thFg = (() => {
+      if (tpl.headerStyle === "dark-band") return tpl.storeColor || "#d4b483";
+      if (tpl.headerBar && tpl.headerBar.text) return tpl.headerBar.text;
+      return "#ffffff";
+    })();
+    const thBorderBottom = (() => {
+      if (tpl.headerStyle === "dark-band") return tpl.ruleColor || "#b08d57";
+      return thBg;
+    })();
+
+    const thumbSize = compact ? 24 : 28;
     const itemThumbs = await Promise.all(sale.items.map(item => {
-      return resolveThumbForPdf(saleItemImage(item), compact ? 26 : 30, item.name);
+      return resolveThumbForPdf(saleItemImage(item), thumbSize, item.name);
     }));
-    const thumbSize = compact ? 26 : 30;
+
     const itemsBody = [
-      pdfItemsHeader(["#", "صورة", "الصنف", "الكمية", "السعر", "الإجمالي"], pdfAccent, compact),
+      pdfItemsHeader(["الإجمالي", "السعر", "الكمية", "الصنف", "صورة", "#"], thBg, compact, thFg),
       ...sale.items.map((item, index) => {
         const metaLine = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
         return [
-          { text: String(index + 1), alignment: "center", bold: true, color: PDF_DESIGN.secondary, fontSize: compact ? 9.5 : 11, margin: [2, 2, 2, 2] },
-          { image: itemThumbs[index], width: thumbSize, height: thumbSize, alignment: "center", margin: [2, 2, 2, 2] },
+          { text: pdfMoneyParts(item.total, { bold: true, size: compact ? 8.5 : 9.5 }), alignment: "center", margin: [2, 2, 2, 2] },
+          { text: pdfMoneyParts(item.price, { bold: false, size: compact ? 8.5 : 9.5 }), alignment: "center", margin: [2, 2, 2, 2] },
+          { text: `${item.qty}`, alignment: "center", bold: true, fontSize: compact ? 9 : 10, margin: [2, 2, 2, 2] },
           {
             stack: [
-              { text: item.name, bold: true, fontSize: compact ? 10 : (tpl.itemNameSize || 11.5), font: tpl.itemNameFont || "Cairo", color: PDF_DESIGN.dark, lineHeight: 1.2, alignment: "center" },
-              { text: metaLine, fontSize: compact ? 8 : 9.5, color: pdfColor(tpl.itemMetaColor, "#64748B"), margin: compact ? [0, 1, 0, 0] : [0, 2, 0, 0], alignment: "center" }
+              { text: item.name, bold: true, fontSize: compact ? 9.5 : (tpl.itemNameSize || 10.5), font: tpl.itemNameFont || "Cairo", color: PDF_DESIGN.dark, lineHeight: 1.15, alignment: "right" },
+              ...(metaLine ? [{ text: metaLine, fontSize: compact ? 7.5 : 8.5, color: pdfColor(tpl.itemMetaColor, "#64748B"), margin: [0, 1, 0, 0], alignment: "right" }] : [])
             ],
-            alignment: "center",
+            alignment: "right",
             margin: [2, 2, 2, 2]
           },
-          { text: `${item.qty}`, alignment: "center", bold: true, fontSize: compact ? 9.5 : 11, margin: [2, 2, 2, 2] },
-          { text: pdfMoneyParts(item.price, { bold: false, size: compact ? 8.5 : 10.5 }), alignment: "left", margin: [2, 2, 2, 2] },
-          { text: pdfMoneyParts(item.total, { bold: true, size: compact ? 8.5 : 10.5 }), alignment: "left", margin: [2, 2, 2, 2] }
+          { image: itemThumbs[index], width: thumbSize, height: thumbSize, alignment: "center", margin: [1, 1, 1, 1] },
+          { text: String(index + 1), alignment: "center", bold: true, color: PDF_DESIGN.secondary, fontSize: compact ? 9 : 10, margin: [2, 2, 2, 2] }
         ];
       })
     ];
 
     const stripeLineColor = pdfColor(tpl.ruleColor, PDF_DESIGN.softBorder);
-    const itemsTable = pdfTable(itemsBody, [24, 40, "*", 46, 66, 78], {
-      layout: pdfItemsLayout(pdfAccent, compact, tableStripes, stripeLineColor),
+    const itemsTable = pdfTable(itemsBody, [78, 66, 44, "*", 38, 24], {
+      layout: pdfItemsLayout(thBg, compact, tableStripes, stripeLineColor, thBorderBottom),
       headerRows: 1,
       rtl: true
     });
@@ -6641,9 +7027,9 @@ function isRecentTap(el) {
     ];
     const returnRow = net.returnAmount > 0
       ? { columns: [
-          { text: `- ${moneyFormatter.format(Number(net.returnAmount || 0))} ${state.settings.currency || ""}`, color: PDF_DESIGN.danger, bold: true, fontSize: compact ? 9.5 : 11, alignment: "left", width: "auto" },
-          { text: "المجموع المرتجع", color: PDF_DESIGN.danger, bold: true, fontSize: compact ? 9.5 : 11, alignment: "right", width: "*" }
-        ], margin: [0, 3, 0, 3] }
+          { text: `- ${moneyFormatter.format(Number(net.returnAmount || 0))} ${state.settings.currency || ""}`, color: PDF_DESIGN.danger, bold: true, fontSize: compact ? 9 : 10.5, alignment: "left", width: "auto" },
+          { text: "المجموع المرتجع", color: PDF_DESIGN.danger, bold: true, fontSize: compact ? 9 : 10.5, alignment: "right", width: "*" }
+        ], margin: [0, 2, 0, 2] }
       : null;
 
     const totalsCardFill = (() => {
@@ -6667,7 +7053,7 @@ function isRecentTap(el) {
       if (grandStyle === "rose") return "#7f1d4e";
       if (grandStyle === "sand") return "#4b4238";
       if (grandStyle === "mint") return "#164e49";
-      if (grandStyle === "gold") return tpl.gold || "#55504a";
+      if (grandStyle === "gold") return tpl.gold || "#b08d57";
       return null;
     })();
 
@@ -6684,12 +7070,12 @@ function isRecentTap(el) {
       return parts;
     };
 
-const grandRowInCard = {
+    const grandRowInCard = {
       columns: [
-        { text: moneyString(net.total, { size: compact ? 11.5 : 17, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [8, 0, 8, 0] },
-        { text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 11.5 : 15.5, alignment: "right", width: "*", margin: [8, 0, 8, 0] }
+        { text: moneyString(net.total, { size: compact ? 11 : 14, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [6, 0, 6, 0] },
+        { text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 11 : 13.5, alignment: "right", width: "*", margin: [6, 0, 6, 0] }
       ],
-      margin: [0, compact ? 4 : 7, 0, 0]
+      margin: [0, compact ? 3 : 5, 0, 0]
     };
 
     const grandBarNode = grandBg ? {
@@ -6698,62 +7084,75 @@ const grandRowInCard = {
         widths: ["*"],
         body: [[{
           columns: [
-            { text: moneyString(net.total, { size: compact ? 11.5 : 17, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [12, 0, 12, 0] },
-{ text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 11.5 : 15.5, alignment: "right", width: "*", margin: [12, 0, 12, 0] }
-        ],
-        fillColor: grandBg
-      }]]
+            { text: moneyString(net.total, { size: compact ? 11 : 14, color: grandText, currencyColor: isDarkHex(grandBg) ? shadeHex(grandText, 0.55) : shadeHex(grandText, 0.35), bold: true }), alignment: "left", width: "auto", margin: [8, 0, 8, 0] },
+            { text: "الإجمالي النهائي", bold: true, color: grandText, font: "CairoSemiBold", fontSize: compact ? 11 : 13.5, alignment: "right", width: "*", margin: [8, 0, 8, 0] }
+          ],
+          fillColor: grandBg
+        }]]
       },
       layout: {
         defaultBorder: false,
-        paddingLeft: () => 14,
-        paddingRight: () => 14,
-        paddingTop: () => (compact ? 3.5 : 6),
-        paddingBottom: () => (compact ? 3.5 : 6)
+        paddingLeft: () => 10,
+        paddingRight: () => 10,
+        paddingTop: () => (compact ? 3 : 5),
+        paddingBottom: () => (compact ? 3 : 5)
       },
-      margin: [0, compact ? 3 : 5, 0, 0]
+      margin: [0, compact ? 2 : 4, 0, 0]
     } : null;
 
     const totalsStack = [
       ...totalRows.map(row => ({
         columns: [
-          { text: moneyString(row[1], { size: compact ? 9.5 : 12.5, color: row[0] === "الخصم" && row[1] > 0 ? PDF_DESIGN.danger : PDF_DESIGN.dark }), alignment: "left", width: "auto", margin: [7, 0, 7, 0] },
-          { text: row[0], color: PDF_DESIGN.secondary, fontSize: compact ? 9 : 11, alignment: "right", width: "*", margin: [7, 0, 7, 0] }
+          { text: moneyString(row[1], { size: compact ? 9 : 10.5, color: row[0] === "الخصم" && row[1] > 0 ? PDF_DESIGN.danger : PDF_DESIGN.dark }), alignment: "left", width: "auto", margin: [6, 0, 6, 0] },
+          { text: row[0], color: PDF_DESIGN.secondary, fontSize: compact ? 8.5 : 9.5, alignment: "right", width: "*", margin: [6, 0, 6, 0] }
         ],
-        margin: [0, compact ? 2 : 2, 0, compact ? 2 : 2]
+        margin: [0, compact ? 1.5 : 1.5, 0, compact ? 1.5 : 1.5]
       })),
       ...(returnRow ? [returnRow] : []),
       ...(grandBg ? [] : [grandRowInCard]),
-        {
-          columns: [
-            { text: amountInWords(net.total), bold: true, color: PDF_DESIGN.dark, fontSize: compact ? 8 : 9.5, alignment: "left", width: "*", lineHeight: 1.2 },
-            { text: "المبلغ بالحروف", color: PDF_DESIGN.secondary, fontSize: compact ? 7.5 : 9, alignment: "right", width: "auto" }
-          ],
-          margin: [8, compact ? 3 : 3, 8, 0]
-        }
+      {
+        canvas: [{ type: "line", x1: 0, y1: 0, x2: contentW - 24, y2: 0, lineWidth: 0.6, lineColor: tpl.ruleColor ? pdfColor(tpl.ruleColor, accent) : PDF_DESIGN.border, dash: { length: 3 } }],
+        margin: [0, 3, 0, 3]
+      },
+      {
+        columns: [
+          { text: amountInWords(net.total), bold: true, color: PDF_DESIGN.dark, fontSize: compact ? 7.5 : 8.5, alignment: "left", width: "*", lineHeight: 1.2 },
+          { text: "المبلغ بالحروف", color: PDF_DESIGN.secondary, fontSize: compact ? 7.5 : 8.5, alignment: "right", width: "auto", margin: [6, 0, 0, 0] }
+        ],
+        margin: [6, 1, 6, 1]
+      }
     ];
 
-    const totalsNode = {
+    const totalsCard = {
       unbreakable: true,
-      columns: [
-        ...(qr ? [{
-          width: compact ? 64 : 76,
-          stack: [
-            { image: qr, width: compact ? 52 : 60, height: compact ? 52 : 60, alignment: "center" },
-            { text: "امسح للتحقق", fontSize: 8, color: PDF_DESIGN.secondary, alignment: "center", margin: [0, 2, 0, 0] }
-          ],
-          alignment: "center"
-        }] : []),
-        {
-          width: "*",
-          stack: [
-            pdfSoftCard(totalsStack, compact, totalsCardFill, totalsCardBorder, compact ? 10 : 13),
-            ...(grandBarNode ? [grandBarNode] : [])
-          ]
-        }
+      stack: [
+        pdfSoftCard(totalsStack, compact, totalsCardFill, totalsCardBorder, compact ? 8 : 10),
+        ...(grandBarNode ? [grandBarNode] : [])
       ],
-      columnGap: 10,
-      margin: [0, compact ? 4 : 5, 0, 0]
+      margin: [0, compact ? 3 : 5, 0, 0]
+    };
+
+    const codeStrip = {
+      unbreakable: true,
+      stack: [
+        ...(qr ? [{
+          table: {
+            widths: ["*", "auto", "*"],
+            body: [[
+              { text: "", border: [false, false, false, false] },
+              { image: qr, width: 48, height: 48, alignment: "center" },
+              { text: "", border: [false, false, false, false] }
+            ]]
+          },
+          layout: "noBorders",
+          margin: [0, compact ? 3 : 5, 0, 2]
+        }] : []),
+        code128CanvasNode(sale.number, compact ? 24 : 28, 1.25),
+        { text: sale.number, fontSize: 8.5, color: PDF_DESIGN.secondary, alignment: "center", margin: [0, 1.5, 0, 0], characterSpacing: 2 },
+        ...(companyLines.length ? [{ text: companyLines.join("   ·   "), alignment: "center", fontSize: 8, color: pdfColor(tpl.footerTextColor, PDF_DESIGN.secondary), margin: [0, 3, 0, 0] }] : []),
+        ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, alignment: "center", fontSize: 8.5, color: pdfColor(tpl.thanksColor, PDF_DESIGN.secondary), margin: [0, 2, 0, 0] }] : [])
+      ],
+      margin: [0, compact ? 3 : 4, 0, 0]
     };
 
     const retHeaderFill = tpl.pdfLight || "#FEE2E2";
@@ -6783,7 +7182,7 @@ const grandRowInCard = {
       return {
         unbreakable: true,
         stack: [
-          { text: "المرتجعات", fontSize: compact ? 10 : 12, bold: true, font: "CairoSemiBold", color: PDF_DESIGN.danger, margin: compact ? [0, 2, 0, 2] : [0, 4, 0, 4] },
+          { text: "المرتجعات", fontSize: compact ? 10 : 12, bold: true, font: "CairoSemiBold", color: PDF_DESIGN.danger, margin: compact ? [0, 2, 0, 2] : [0, 3, 0, 3] },
           pdfTable([
             [retHeader("الإجمالي"), retHeader("السعر"), retHeader("الكمية"), retHeader("الصنف")],
             ...rows
@@ -6795,84 +7194,49 @@ const grandRowInCard = {
     const sectionTitleColor = pdfColor(tpl.sectionTitleColor, accent);
     const sectionTitle = (text) => ({
       text,
-      fontSize: compact ? 11 : 14.5,
+      fontSize: compact ? 10.5 : 13,
       bold: true,
       font: tpl.sectionTitleFont || "CairoSemiBold",
       color: sectionTitleColor,
-      margin: [0, compact ? 2 : 2.5, 0, compact ? 2 : 2.5]
+      alignment: "right",
+      margin: [0, compact ? 1.5 : 2, 0, compact ? 1.5 : 2]
     });
-
-    const stInfo = invoiceStatusData(sale);
-    const statusStampNode = {
-      unbreakable: true,
-      table: {
-        widths: ["*", "auto"],
-        body: [[
-          { text: "", border: [false, false, false, false] },
-          {
-            stack: [
-              { text: stInfo.label, bold: true, font: "CairoSemiBold", fontSize: compact ? 10.5 : 12.5, color: stInfo.color, alignment: "center" },
-              { text: stInfo.sub, fontSize: compact ? 6.5 : 7.5, color: stInfo.color, alignment: "center", margin: [0, 1, 0, 0] }
-            ],
-            fillColor: stInfo.bg,
-            margin: [10, 3, 10, 3]
-          }
-        ]]
-      },
-      layout: {
-        defaultBorder: false,
-        hLineWidth: (i, node) => (i === 0 || i === node.table.body.length) ? 1.2 : 0,
-        hLineColor: () => stInfo.color,
-        vLineWidth: (i, node) => (i === 0 || i === node.table.widths.length) ? 1.2 : 0,
-        vLineColor: () => stInfo.color
-      },
-      margin: [0, 0, 0, compact ? 2 : 4]
-    };
-
-    const pageM = compact ? [14, 18, 14, 54] : [38, 42, 38, 58];
-    const docContentW = 595.28 - pageM[0] - pageM[2];
 
     return {
       rtl: true,
       pageSize: "A4",
       pageMargins: pageM,
-      defaultStyle: { font: "Cairo", fontSize: compact ? 8.5 : 10.5, lineHeight: compact ? 1.05 : 1.08 },
+      defaultStyle: { font: "Cairo", fontSize: compact ? 8.5 : 10, lineHeight: compact ? 1.05 : 1.08 },
       content: [
         header,
         headerRule,
-        statusStampNode,
         infoSection,
         sectionTitle("تفاصيل الفاتورة"),
         itemsTable,
         ...(returns.length ? [pdfReturnsBlock()] : []),
-        totalsNode,
-        {
-          stack: [
-            code128CanvasNode(sale.number, compact ? 28 : 34, 1.35),
-            { text: sale.number, fontSize: 9, color: PDF_DESIGN.secondary, alignment: "center", margin: [0, 2, 0, 0], characterSpacing: 2 }
-          ],
-          margin: [0, compact ? 4 : 7, 0, 0]
-        }
+        totalsCard,
+        codeStrip
       ],
       header: currentPage => {
         if (currentPage <= 1) return null;
         return {
-          margin: [pageM[0], 12, pageM[2], 0],
+          margin: [pageM[0], 10, pageM[2], 0],
           columns: [
-            { text: `${sale.number} — فاتورة مبيعات`, color: PDF_DESIGN.secondary, fontSize: 9.5, alignment: "left", width: "auto" },
-            { text: state.settings.storeName, bold: true, color: accent, fontSize: 10, alignment: "right", width: "*" }
+            { text: `${sale.number} — فاتورة مبيعات`, color: PDF_DESIGN.secondary, fontSize: 9, alignment: "left", width: "auto" },
+            { text: state.settings.storeName, bold: true, color: accent, fontSize: 9.5, alignment: "right", width: "*" }
           ]
         };
       },
-      footer: (currentPage, pageCount) => ({
-        stack: [
-          { canvas: [{ type: "line", x1: 0, y1: 0, x2: docContentW, y2: 0, lineWidth: 0.8, lineColor: tpl.footerRule || PDF_DESIGN.border }] },
-          ...(state.settings.invoiceFooter ? [{ text: state.settings.invoiceFooter, alignment: "center", fontSize: 9.5, color: pdfColor(tpl.thanksColor, PDF_DESIGN.secondary), margin: [0, 6, 0, 0] }] : []),
-          ...(companyLines.length ? [{ text: companyLines.join("   |   "), alignment: "center", fontSize: 9, color: pdfColor(tpl.footerTextColor, PDF_DESIGN.secondary), margin: [0, 3, 0, 0] }] : []),
-          { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 9, color: pdfColor(tpl.footerTextColor, PDF_DESIGN.secondary), margin: [0, 3, 0, 0] }
-        ],
-        margin: [pageM[0], 8, pageM[2], 0]
-      }),
+      footer: (currentPage, pageCount) => {
+        if (pageCount <= 1) return null;
+        return {
+          stack: [
+            { canvas: [{ type: "line", x1: 0, y1: 0, x2: docContentW, y2: 0, lineWidth: 0.8, lineColor: tpl.footerRule || PDF_DESIGN.border }] },
+            { text: `صفحة ${currentPage} من ${pageCount}`, alignment: "center", fontSize: 8, color: pdfColor(tpl.footerTextColor, PDF_DESIGN.secondary), margin: [0, 2, 0, 0] }
+          ],
+          margin: [pageM[0], 4, pageM[2], 0]
+        };
+      },
       info: {
         title: `${sale.number} - ${state.settings.storeName}`,
         author: state.settings.storeName
@@ -6925,12 +7289,12 @@ const grandRowInCard = {
       table: {
         widths: ["*", "*"],
         body: [
-          [metaCell("رقم الفاتورة", sale.number), metaCell("التاريخ", dateTime(sale.date))],
+          [metaCell("التاريخ", dateTime(sale.date)), metaCell("رقم الفاتورة", sale.number)],
           [
-            metaCell("طريقة الدفع", sale.paymentMethod || "نقداً"),
-            metaCell("العميل", sale.customerName || "عميل نقدي")
+            metaCell("العميل", sale.customerName || "عميل نقدي"),
+            metaCell("طريقة الدفع", sale.paymentMethod || "نقداً")
           ],
-          ...(sale.customerPhone ? [[metaCell("الهاتف", sale.customerPhone), { text: "" }]] : [])
+          ...(sale.customerPhone ? [[{ text: "" }, metaCell("الهاتف", sale.customerPhone)]] : [])
         ]
       },
       layout: {
@@ -6945,20 +7309,22 @@ const grandRowInCard = {
       margin: [0, 2, 0, 2]
     };
 
-    const colWidths = isNarrow ? [10, "*", 18, 32, 40] : [12, "*", 22, 38, 48];
+    const colWidths = isNarrow ? [38, 30, 16, "*", 10] : [48, 38, 20, "*", 12];
     const hdrFontSize = isNarrow ? 7 : 7.5;
     const itemHeader = [
-      { text: "#", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" },
-      { text: "الصنف", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "right" },
-      { text: "كمية", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" },
+      { text: "الإجمالي", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" },
       { text: "السعر", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" },
-      { text: "الإجمالي", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "left" }
+      { text: "كمية", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" },
+      { text: "الصنف", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "right" },
+      { text: "#", bold: true, fontSize: hdrFontSize, color: PDF_DESIGN.white, fillColor: accent, alignment: "center" }
     ];
 
     const itemRows = sale.items.map((item, index) => {
       const metaLine = [item.sku, item.size, item.color].filter(Boolean).join(" · ");
       return [
-        { text: String(index + 1), color: PDF_DESIGN.secondary, fontSize: isNarrow ? 7 : 7.5, alignment: "center" },
+        { ...moneyText(item.total, { size: isNarrow ? 7.5 : 8, bold: true }), alignment: "center" },
+        { text: moneyText(item.price, { size: isNarrow ? 7 : 7.5 }).text, fontSize: isNarrow ? 7 : 7.5, alignment: "center" },
+        { text: String(item.qty), fontSize: isNarrow ? 8 : 8.5, alignment: "center" },
         {
           stack: [
             { text: item.name, fontSize: isNarrow ? 8 : 8.5, bold: true, color: PDF_DESIGN.dark, alignment: "right", lineHeight: 1.15 },
@@ -6966,9 +7332,7 @@ const grandRowInCard = {
           ],
           width: "*"
         },
-        { text: String(item.qty), fontSize: isNarrow ? 8 : 8.5, alignment: "center" },
-        { text: moneyText(item.price, { size: isNarrow ? 7 : 7.5 }).text, fontSize: isNarrow ? 7 : 7.5, alignment: "center" },
-        { ...moneyText(item.total, { size: isNarrow ? 7.5 : 8, bold: true }), alignment: "left" }
+        { text: String(index + 1), color: PDF_DESIGN.secondary, fontSize: isNarrow ? 7 : 7.5, alignment: "center" }
       ];
     });
 
@@ -7165,40 +7529,42 @@ const grandRowInCard = {
     };
   }
 
-  function pdfItemsHeader(labels, accent, compact) {
+  function pdfItemsHeader(labels, accent, compact, fgColor) {
     return labels.map(label => ({
       text: label,
       bold: true,
       font: "CairoSemiBold",
-      color: "#ffffff",
+      color: fgColor || "#ffffff",
       fillColor: accent,
-      alignment: "center",
+      alignment: label === "الصنف" ? "right" : "center",
       noWrap: true,
-      fontSize: compact ? 9 : 11,
+      fontSize: compact ? 9 : 10.5,
       margin: [3, compact ? 4 : 4.5, 3, compact ? 4 : 4.5]
     }));
   }
 
-  function pdfItemsLayout(accent, compact, stripes, stripeColor) {
+  function pdfItemsLayout(accent, compact, stripes, stripeColor, borderLineColor) {
     const useStripes = stripes !== false;
     const sColor = stripeColor || PDF_DESIGN.softBorder;
+    const bColor = borderLineColor || accent;
     return {
       defaultBorder: false,
       hLineWidth: (i, node) => {
         if (i === 0) return 0.8;
-        if (i === 1) return 1;
-        if (i === node.table.body.length) return 0.8;
+        if (i === 1) return 1.5;
+        if (i === node.table.body.length) return 1.2;
         return 0.4;
       },
       hLineColor: (i, node) => {
-        if (i === 1) return accent;
+        if (i === 1) return bColor;
+        if (i === node.table.body.length) return bColor;
         return sColor;
       },
       vLineWidth: () => 0,
       paddingLeft: () => 6,
       paddingRight: () => 6,
-      paddingTop: () => (compact ? 3 : 4.5),
-      paddingBottom: () => (compact ? 3 : 4.5),
+      paddingTop: () => (compact ? 3 : 4),
+      paddingBottom: () => (compact ? 3 : 4),
       fillColor: (rowIndex) => {
         if (rowIndex === 0) return accent;
         if (useStripes && rowIndex % 2 === 0) return PDF_DESIGN.background;
@@ -8190,9 +8556,13 @@ const grandRowInCard = {
       showInvoiceQr: !!document.getElementById("showInvoiceQr")?.checked,
       customerCodePrefix: document.getElementById("customerCodePrefix")?.value.trim() || state.settings.customerCodePrefix || "CUST"
     };
+    const allowTaxFreeChanged = nextSettings.allowTaxFree !== state.settings.allowTaxFree;
     if (!(await commitState({ settings: nextSettings }))) {
       showStorageFullDialog();
       return;
+    }
+    if (allowTaxFreeChanged) {
+      state._saleTaxFree = saleTaxFreeDefault();
     }
     applySettings();
     toastMessage("تم حفظ الإعدادات");
@@ -8249,9 +8619,12 @@ const grandRowInCard = {
     };
     const ranges = {
       day: [today, today],
+      yesterday: [daysAgo(1), daysAgo(1)],
       week: [daysAgo(6), today],
       month: [new Date(today.getFullYear(), today.getMonth(), 1), today],
+      lastMonth: [new Date(today.getFullYear(), today.getMonth() - 1, 1), new Date(today.getFullYear(), today.getMonth(), 0)],
       month30: [daysAgo(29), today],
+      year: [new Date(today.getFullYear(), 0, 1), today],
       all: [null, null]
     };
     const [from, to] = ranges[preset] || ranges.all;
@@ -8260,7 +8633,7 @@ const grandRowInCard = {
     state.report.ready = false;
     state.report.loading = false;
     render();
-    toastMessage(preset === "all" ? "تم عرض كل الفترة بدون تصفية" : "تم تطبيق الفترة الزمنية على التقرير");
+    toastMessage(preset === "all" ? "حدد الفترة الزمنية لعرض بيانات التقرير" : "تم تطبيق الفترة الزمنية على التقرير");
   }
 
   function clearReportFilters() {
@@ -8273,7 +8646,7 @@ const grandRowInCard = {
     state.report.ready = false;
     state.report.loading = false;
     render();
-    toastMessage("تم مسح جميع الفلاتر");
+    toastMessage("تم مسح الفلاتر — حدد الفترة الزمنية لعرض البيانات");
   }
 
   function exportBackup() {
